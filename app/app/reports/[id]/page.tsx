@@ -1,12 +1,16 @@
+"use client"
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { mockReports } from "@/lib/mock-data"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts"
 import { Download } from "lucide-react"
+import { use } from "react"
 
-export default function ReportDetailPage({ params }: { params: { id: string } }) {
-  const report = mockReports.find((r) => r.id === params.id)
+export default function ReportDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params)
+  const report = mockReports.find((r) => r.id === id)
 
   if (!report) {
     return <div className="text-center py-12">Rapport non trouvé</div>

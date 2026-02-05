@@ -1,12 +1,13 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, use } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Clock, CheckCircle2, AlertCircle } from "lucide-react"
 
-export default function PlayerSessionPage({ params }: { params: { sessionId: string } }) {
+export default function PlayerSessionPage({ params }: { params: Promise<{ sessionId: string }> }) {
+  const { sessionId } = use(params)
   const [timeLeft, setTimeLeft] = useState(3600) // 1 hour in seconds
   const [completedObjectives, setCompletedObjectives] = useState<number[]>([])
 

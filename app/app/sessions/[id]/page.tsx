@@ -1,11 +1,15 @@
+"use client"
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { mockSessions } from "@/lib/mock-data"
 import { Play, X } from "lucide-react"
+import { use } from "react"
 
-export default function SessionDetailPage({ params }: { params: { id: string } }) {
-  const session = mockSessions.find((s) => s.id === params.id)
+export default function SessionDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params)
+  const session = mockSessions.find((s) => s.id === id)
 
   if (!session) {
     return <div className="text-center py-12">Session non trouvée</div>
