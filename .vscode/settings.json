@@ -1,0 +1,51 @@
+{
+  "github.copilot.chat.codeGeneration.useInstructionFiles": true,
+  "github.copilot.chat.codeGeneration.instructions": [
+    {
+      "text": "Ce projet est CyberAegis, une plateforme SaaS d'escape game cybersécurité. Stack : Next.js 16, React 19, TypeScript 5 strict, Tailwind CSS v4, shadcn/ui, Firebase Firestore + Auth. L'UI est entièrement en français."
+    },
+    {
+      "text": "Ne jamais utiliser `any` en TypeScript. Toujours importer les types depuis `lib/types.ts`."
+    },
+    {
+      "text": "Ne jamais appeler Firestore directement depuis un composant. Utiliser les services `lib/firestore/` et les hooks `lib/hooks/`."
+    },
+    {
+      "text": "Toutes les queries Firestore doivent filtrer par `organizationId` (architecture multi-tenant)."
+    },
+    {
+      "text": "Utiliser `onSnapshot` pour les données temps réel (sessions RUNNING) et `getDocs`/`getDoc` pour les lectures ponctuelles."
+    },
+    {
+      "text": "Les formulaires utilisent React Hook Form + Zod avec `zodResolver`. Les erreurs s'affichent via `{errors.field?.message}` et les toasts via `sonner`."
+    },
+    {
+      "text": "Ajouter `\"use client\"` uniquement si le composant utilise des hooks, événements ou état local. Préférer les Server Components."
+    },
+    {
+      "text": "Ne pas créer de nouveaux composants UI de base — utiliser uniquement ceux de `components/ui/` (shadcn/ui)."
+    },
+    {
+      "text": "Statuts Session : PLANNED (bg-gray-100 text-gray-800), RUNNING (bg-green-100 text-green-800), FINISHED (bg-red-100 text-red-800). Difficultés : Débutant (vert), Intermédiaire (jaune), Avancé (rouge)."
+    },
+    {
+      "text": "Rôles utilisateurs : ADMIN, MANAGER, ANIMATOR, PLAYER. Toujours récupérer l'`organizationId` depuis le contexte auth, ne jamais le coder en dur."
+    }
+  ],
+  "github.copilot.chat.testGeneration.instructions": [
+    {
+      "text": "Pour CyberAegis, utiliser Vitest pour les tests unitaires et React Testing Library pour les composants. Mocker Firebase avec `vi.mock('firebase/firestore')`. Tester les services Firestore de `lib/firestore/` en isolant `db`."
+    }
+  ],
+  "github.copilot.chat.reviewSelection.instructions": [
+    {
+      "text": "Lors d'une code review CyberAegis, vérifier : 1) Filtrage par organizationId dans chaque query Firestore, 2) Absence de `any` TypeScript, 3) `\"use client\"` présent uniquement si nécessaire, 4) Utilisation des services lib/firestore/ et non de db direct, 5) Gestion des états loading/error, 6) Toast sonner pour les retours utilisateur."
+    }
+  ],
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "typescript.preferences.importModuleSpecifier": "non-relative",
+  "tailwindCSS.experimental.classRegex": [
+    ["cn\\(([^)]*)\\)", "[\"'`]([^\"'`]*).*?[\"'`]"]
+  ]
+}

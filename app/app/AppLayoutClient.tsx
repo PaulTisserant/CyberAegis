@@ -1,13 +1,14 @@
 "use client"
 
 import type React from "react"
-
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { Menu, X, LogOut, Settings, User } from "lucide-react"
+import { useAuth } from "@/lib/auth/AuthContext"
+import { toast } from "sonner"
 
 const navigation = [
   { name: "Dashboard", href: "/app" },
@@ -24,15 +25,24 @@ export default function AppLayoutClient({
 }) {
   const pathname = usePathname()
   const router = useRouter()
+  const { user, signOut } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(true)
 
-  const handleLogout = () => {
-    router.push("/")
+  const handleLogout = async () => {
+    try {
+      await signOut()
+      router.push("/")
+    } catch {
+      toast.error("Erreur lors de la déconnexion")
+    }
   }
 
-  const handleNavClick = () => {
-    // Keep sidebar state as is - don't close it on click
-  }
+  const initials = user
+    ? `${user.firstName.charAt(0)}${user.lastName.charAt(0)}`.toUpperCase()
+    : "?"
+
+  const displayName = user ? `${user.firstName} ${user.lastName}` : ""
+  const orgName = "CyberAegis"
 
   return (
     <div className="min-h-screen bg-background">
@@ -63,7 +73,6 @@ export default function AppLayoutClient({
               <Link
                 key={item.href}
                 href={item.href}
-                onClick={handleNavClick}
                 className={`block px-4 py-2 rounded-lg transition ${
                   isActive ? "bg-primary text-primary-foreground" : "text-foreground hover:bg-muted"
                 } ${!sidebarOpen && "px-2 text-center"}`}
@@ -81,23 +90,28 @@ export default function AppLayoutClient({
         {/* Top Bar */}
         <header className="border-b border-border bg-card sticky top-0 z-40">
           <div className="flex h-16 items-center justify-between px-6">
-            <h1 className="text-xl font-bold text-foreground">Entreprise Tech</h1>
+            <h1 className="text-xl font-bold text-foreground">{orgName}</h1>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="rounded-full">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground font-medium">
-                    AD
+                <Button variant="ghost" size="sm" className="rounded-full gap-2">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground font-medium text-sm">
+                    {initials}
                   </div>
+                  {sidebarOpen && <span className="text-sm hidden md:block">{displayName}</span>}
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem className="flex items-center gap-2">
-                  <User className="h-4 w-4" />
-                  Mon profil
+                <DropdownMenuItem asChild>
+                  <Link href="/app/profile" className="flex items-center gap-2 cursor-pointer">
+                    <User className="h-4 w-4" />
+                    Mon profil
+                  </Link>
                 </DropdownMenuItem>
-                <DropdownMenuItem className="flex items-center gap-2">
-                  <Settings className="h-4 w-4" />
-                  Paramètres
+                <DropdownMenuItem asChild>
+                  <Link href="/app/profile" className="flex items-center gap-2 cursor-pointer">
+                    <Settings className="h-4 w-4" />
+                    Paramètres
+                  </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem className="flex items-center gap-2 text-destructive" onClick={handleLogout}>
                   <LogOut className="h-4 w-4" />

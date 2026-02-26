@@ -1,39 +1,65 @@
 "use client"
 
 import type React from "react"
-
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { createSession } from "@/lib/firestore/sessions"
+import { toast } from "sonner"
+import type { Scenario } from "@/lib/types"
 
-interface CreateSessionModalProps {
-  isOpen: boolean
+interface Props {
+  open: boolean
   onClose: () => void
-  onSubmit: (data: {
-    name: string
-    scenario: string
-    date: string
-    difficulty: string
-  }) => void
-  scenarios: Array<{ id: string; name: string }>
+  organizationId: string
+  createdBy: string
+  scenarios: Scenario[]
 }
 
-export default function CreateSessionModal({ isOpen, onClose, onSubmit, scenarios }: CreateSessionModalProps) {
+export default function CreateSessionModal({ open, onClose, organizationId, createdBy, scenarios }: Props) {
   const [formData, setFormData] = useState({
     name: "",
-    scenario: "",
+    scenarioId: "",
+    scenarioName: "",
     date: "",
-    difficulty: "Standard",
   })
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    onSubmit(formData)
-    setFormData({ name: "", scenario: "", date: "", difficulty: "Standard" })
+  const handleScenarioChange = (scenarioId: string) => {
+    const scenario = scenarios.find((s) => s.id === scenarioId)
+    setFormData({ ...formData, scenarioId, scenarioName: scenario?.name ?? "" })
   }
 
-  if (!isOpen) return null
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!formData.scenarioId) {
+      toast.error("Veuillez sélectionner un scénario")
+      return
+    }
+    setIsSubmitting(true)
+    try {
+      await createSession({
+        name: formData.name,
+        scenarioId: formData.scenarioId,
+        scenarioName: formData.scenarioName,
+        date: formData.date,
+        status: "PLANNED",
+        players: 0,
+        organizationId,
+        createdBy,
+      })
+      toast.success("Session créée avec succès")
+      setFormData({ name: "", scenarioId: "", scenarioName: "", date: "" })
+      onClose()
+    } catch {
+      toast.error("Erreur lors de la création de la session")
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  if (!open) return null
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -53,13 +79,13 @@ export default function CreateSessionModal({ isOpen, onClose, onSubmit, scenario
           </div>
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">Scénario</label>
-            <Select value={formData.scenario} onValueChange={(value) => setFormData({ ...formData, scenario: value })}>
+            <Select value={formData.scenarioId} onValueChange={handleScenarioChange}>
               <SelectTrigger>
                 <SelectValue placeholder="Sélectionner un scénario" />
               </SelectTrigger>
               <SelectContent>
                 {scenarios.map((scenario) => (
-                  <SelectItem key={scenario.id} value={scenario.name}>
+                  <SelectItem key={scenario.id} value={scenario.id}>
                     {scenario.name}
                   </SelectItem>
                 ))}
@@ -75,27 +101,12 @@ export default function CreateSessionModal({ isOpen, onClose, onSubmit, scenario
               required
             />
           </div>
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground">Niveau de difficulté</label>
-            <Select
-              value={formData.difficulty}
-              onValueChange={(value) => setFormData({ ...formData, difficulty: value })}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="Standard">Standard</SelectItem>
-                <SelectItem value="Avancé">Avancé</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
           <div className="flex gap-3 pt-4">
             <Button type="button" variant="outline" className="flex-1 bg-transparent" onClick={onClose}>
               Annuler
             </Button>
-            <Button type="submit" className="flex-1">
-              Créer
+            <Button type="submit" className="flex-1" disabled={isSubmitting}>
+              {isSubmitting ? "Création..." : "Créer"}
             </Button>
           </div>
         </form>

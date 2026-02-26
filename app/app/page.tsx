@@ -1,38 +1,40 @@
+"use client"
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { mockSessions, mockUsers } from "@/lib/mock-data"
 import Link from "next/link"
 import { Users, Play, FileText } from "lucide-react"
+import { useAuth } from "@/lib/auth/AuthContext"
+import { useSessions } from "@/lib/hooks/useSessions"
+import { useUsers } from "@/lib/hooks/useUsers"
+import { useReports } from "@/lib/hooks/useReports"
 
 export default function DashboardPage() {
-  const activeSessions = mockSessions.filter((s) => s.status === "RUNNING").length
-  const totalPlayers = mockSessions.reduce((sum, s) => sum + s.players, 0)
-  const totalReports = 8
+  const { user } = useAuth()
+  const orgId = user?.organizationId ?? ""
+  const { sessions } = useSessions(orgId)
+  const { users } = useUsers(orgId)
+  const { reports } = useReports(orgId)
+
+  const activeSessions = sessions.filter((s) => s.status === "RUNNING").length
+  const totalPlayers = sessions.reduce((sum, s) => sum + s.players, 0)
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "RUNNING":
-        return "bg-green-100 text-green-800"
-      case "PLANNED":
-        return "bg-gray-100 text-gray-800"
-      case "FINISHED":
-        return "bg-red-100 text-red-800"
-      default:
-        return "bg-gray-100 text-gray-800"
+      case "RUNNING": return "bg-green-100 text-green-800"
+      case "PLANNED": return "bg-gray-100 text-gray-800"
+      case "FINISHED": return "bg-red-100 text-red-800"
+      default: return "bg-gray-100 text-gray-800"
     }
   }
 
   const getStatusLabel = (status: string) => {
     switch (status) {
-      case "RUNNING":
-        return "En cours"
-      case "PLANNED":
-        return "Planifiée"
-      case "FINISHED":
-        return "Terminée"
-      default:
-        return status
+      case "RUNNING": return "En cours"
+      case "PLANNED": return "Planifiée"
+      case "FINISHED": return "Terminée"
+      default: return status
     }
   }
 
@@ -73,7 +75,7 @@ export default function DashboardPage() {
             <Users className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-foreground">{mockUsers.length}</div>
+            <div className="text-2xl font-bold text-foreground">{users.length}</div>
             <p className="text-xs text-muted-foreground mt-1">Dans votre compte</p>
           </CardContent>
         </Card>
@@ -84,7 +86,7 @@ export default function DashboardPage() {
             <FileText className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-foreground">{totalReports}</div>
+            <div className="text-2xl font-bold text-foreground">{reports.length}</div>
             <p className="text-xs text-muted-foreground mt-1">Générés</p>
           </CardContent>
         </Card>
@@ -118,10 +120,10 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {mockSessions.map((session) => (
+                {sessions.slice(0, 5).map((session) => (
                   <tr key={session.id} className="border-b border-border hover:bg-muted/50 transition">
                     <td className="py-3 px-4 text-foreground font-medium">{session.name}</td>
-                    <td className="py-3 px-4 text-muted-foreground">{session.scenario}</td>
+                    <td className="py-3 px-4 text-muted-foreground">{session.scenarioName}</td>
                     <td className="py-3 px-4 text-muted-foreground">{session.date}</td>
                     <td className="py-3 px-4">
                       <Badge className={`${getStatusColor(session.status)}`}>{getStatusLabel(session.status)}</Badge>
