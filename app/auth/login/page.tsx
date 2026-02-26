@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useState } from "react"
-import { signInWithEmailAndPassword } from "firebase/auth"
+import { signInWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth"
 import { auth } from "@/lib/firebase"
 import { toast } from "sonner"
 
@@ -18,6 +18,28 @@ function LoginForm() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [isResetting, setIsResetting] = useState(false)
+
+  const handleForgotPassword = async () => {
+    if (!email) {
+      toast.error("Entrez votre email pour réinitialiser le mot de passe")
+      return
+    }
+    setIsResetting(true)
+    try {
+      await sendPasswordResetEmail(auth, email)
+      toast.success("Email de réinitialisation envoyé, vérifiez votre boîte mail")
+    } catch (err: unknown) {
+      const code = (err as { code?: string }).code
+      if (code === "auth/user-not-found") {
+        toast.error("Aucun compte associé à cet email")
+      } else {
+        toast.error("Erreur lors de l'envoi de l'email")
+      }
+    } finally {
+      setIsResetting(false)
+    }
+  }
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -70,9 +92,19 @@ function LoginForm() {
             />
           </div>
           <div className="space-y-2">
-            <label htmlFor="password" className="text-sm font-medium text-foreground">
-              Mot de passe
-            </label>
+            <div className="flex items-center justify-between">
+              <label htmlFor="password" className="text-sm font-medium text-foreground">
+                Mot de passe
+              </label>
+              <button
+                type="button"
+                onClick={handleForgotPassword}
+                disabled={isResetting}
+                className="text-xs text-primary hover:underline disabled:opacity-50"
+              >
+                {isResetting ? "Envoi..." : "Mot de passe oublié ?"}
+              </button>
+            </div>
             <Input
               id="password"
               type="password"
