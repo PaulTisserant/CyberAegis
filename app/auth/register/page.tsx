@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useState } from "react"
-import { createUserWithEmailAndPassword } from "firebase/auth"
+import { createUserWithEmailAndPassword, sendEmailVerification } from "firebase/auth"
 import { doc, setDoc, addDoc, collection, Timestamp } from "firebase/firestore"
 import { auth, db } from "@/lib/firebase"
 import { toast } from "sonner"
@@ -78,7 +78,8 @@ export default function RegisterPage() {
         body: JSON.stringify({ idToken }),
       })
 
-      toast.success("Compte créé avec succès !")
+      await sendEmailVerification(fbUser)
+      toast.success("Compte créé ! Un email de vérification a été envoyé.")
       router.push("/app")
     } catch (err: unknown) {
       const code = (err as { code?: string }).code
