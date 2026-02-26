@@ -15,7 +15,7 @@ const PUBLIC_PATHS = [
   "/auth/register",
 ]
 
-export function proxy(request: NextRequest) {
+export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
   const session = request.cookies.get("__session")
 
