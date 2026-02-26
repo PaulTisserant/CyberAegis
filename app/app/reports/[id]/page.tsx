@@ -1,17 +1,32 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { mockReports } from "@/lib/mock-data"
+import { getReport } from "@/lib/firestore/reports"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts"
 import { Download } from "lucide-react"
 import { use } from "react"
+import type { Report } from "@/lib/types"
 
 export default function ReportDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
-  const report = mockReports.find((r) => r.id === id)
+  const [report, setReport] = useState<Report | null>(null)
+  const [loading, setLoading] = useState(true)
 
+  useEffect(() => {
+    getReport(id).then((r) => {
+      setReport(r)
+      setLoading(false)
+    })
+  }, [id])
+
+  if (loading) return (
+    <div className="flex items-center justify-center h-64">
+      <span className="text-muted-foreground">Chargement...</span>
+    </div>
+  )
   if (!report) {
     return <div className="text-center py-12">Rapport non trouvé</div>
   }
@@ -36,7 +51,7 @@ export default function ReportDetailPage({ params }: { params: Promise<{ id: str
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-foreground">{report.sessionName}</h1>
-          <p className="text-muted-foreground mt-2">Rapport détaillé - {report.generatedAt}</p>
+          <p className="text-muted-foreground mt-2">Rapport détaillé - {report.generatedAt.toDate().toLocaleDateString("fr-FR")}</p>
         </div>
         <Button>
           <Download className="h-4 w-4 mr-2" />

@@ -1,16 +1,20 @@
 "use client"
 
 import type React from "react"
-
+import { Suspense } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useState } from "react"
+import { signInWithEmailAndPassword } from "firebase/auth"
+import { auth } from "@/lib/firebase"
+import { toast } from "sonner"
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
@@ -18,11 +22,30 @@ export default function LoginPage() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
-    // Mock login - redirect to dashboard after a short delay
-    setTimeout(() => {
-      router.push("/app")
+    try {
+      const credential = await signInWithEmailAndPassword(auth, email, password)
+      const idToken = await credential.user.getIdToken()
+      await fetch("/api/auth/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken }),
+      })
+      toast.success("Connexion réussie")
+      const redirect = searchParams.get("redirect") ?? "/app"
+      router.push(redirect)
+    } catch (err: unknown) {
+      await fetch("/api/auth/session", { method: "DELETE" }).catch(() => null)
+      const code = (err as { code?: string }).code
+      if (code === "auth/invalid-credential" || code === "auth/wrong-password" || code === "auth/user-not-found") {
+        toast.error("Email ou mot de passe incorrect")
+      } else if (code === "auth/too-many-requests") {
+        toast.error("Trop de tentatives, réessayez plus tard")
+      } else {
+        toast.error("Erreur de connexion")
+      }
+    } finally {
       setIsLoading(false)
-    }, 800)
+    }
   }
 
   return (
@@ -71,5 +94,13 @@ export default function LoginPage() {
         </p>
       </CardContent>
     </Card>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
   )
 }

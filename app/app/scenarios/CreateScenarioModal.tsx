@@ -1,44 +1,55 @@
 "use client"
 
 import type React from "react"
-
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { createScenario } from "@/lib/firestore/scenarios"
+import { toast } from "sonner"
+import type { Difficulty } from "@/lib/types"
 
-interface CreateScenarioModalProps {
-  isOpen: boolean
+interface Props {
+  open: boolean
   onClose: () => void
-  onSubmit: (data: {
-    name: string
-    description: string
-    difficulty: string
-    tags: string[]
-  }) => void
+  organizationId: string
 }
 
-export default function CreateScenarioModal({ isOpen, onClose, onSubmit }: CreateScenarioModalProps) {
+export default function CreateScenarioModal({ open, onClose, organizationId }: Props) {
   const [formData, setFormData] = useState({
     name: "",
     description: "",
-    difficulty: "Débutant",
+    difficulty: "Débutant" as Difficulty,
     tags: "",
+    duration: 60,
   })
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    onSubmit({
-      name: formData.name,
-      description: formData.description,
-      difficulty: formData.difficulty,
-      tags: formData.tags.split(",").filter((t) => t.trim()),
-    })
-    setFormData({ name: "", description: "", difficulty: "Débutant", tags: "" })
+    setIsSubmitting(true)
+    try {
+      await createScenario({
+        name: formData.name,
+        description: formData.description,
+        difficulty: formData.difficulty,
+        tags: formData.tags.split(",").map((t) => t.trim()).filter(Boolean),
+        duration: formData.duration,
+        organizationId,
+        isActive: true,
+      })
+      toast.success("Scénario créé avec succès")
+      setFormData({ name: "", description: "", difficulty: "Débutant", tags: "", duration: 60 })
+      onClose()
+    } catch {
+      toast.error("Erreur lors de la création du scénario")
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
-  if (!isOpen) return null
+  if (!open) return null
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -66,21 +77,31 @@ export default function CreateScenarioModal({ isOpen, onClose, onSubmit }: Creat
               required
             />
           </div>
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground">Niveau de difficulté</label>
-            <Select
-              value={formData.difficulty}
-              onValueChange={(value) => setFormData({ ...formData, difficulty: value })}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="Débutant">Débutant</SelectItem>
-                <SelectItem value="Intermédiaire">Intermédiaire</SelectItem>
-                <SelectItem value="Avancé">Avancé</SelectItem>
-              </SelectContent>
-            </Select>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground">Difficulté</label>
+              <Select
+                value={formData.difficulty}
+                onValueChange={(v) => setFormData({ ...formData, difficulty: v as Difficulty })}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Débutant">Débutant</SelectItem>
+                  <SelectItem value="Intermédiaire">Intermédiaire</SelectItem>
+                  <SelectItem value="Avancé">Avancé</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground">Durée (min)</label>
+              <Input
+                type="number"
+                min={5}
+                value={formData.duration}
+                onChange={(e) => setFormData({ ...formData, duration: Number(e.target.value) })}
+                required
+              />
+            </div>
           </div>
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">Tags (séparés par des virgules)</label>
@@ -94,8 +115,8 @@ export default function CreateScenarioModal({ isOpen, onClose, onSubmit }: Creat
             <Button type="button" variant="outline" className="flex-1 bg-transparent" onClick={onClose}>
               Annuler
             </Button>
-            <Button type="submit" className="flex-1">
-              Créer
+            <Button type="submit" className="flex-1" disabled={isSubmitting}>
+              {isSubmitting ? "Création..." : "Créer"}
             </Button>
           </div>
         </form>

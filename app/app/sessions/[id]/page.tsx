@@ -1,147 +1,149 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { mockSessions } from "@/lib/mock-data"
+import { Progress } from "@/components/ui/progress"
 import { Play, X } from "lucide-react"
 import { use } from "react"
+import { getSession, startSession, finishSession } from "@/lib/firestore/sessions"
+import { useSessionPlayers } from "@/lib/hooks/useSessions"
+import { toast } from "sonner"
+import type { Session } from "@/lib/types"
 
 export default function SessionDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
-  const session = mockSessions.find((s) => s.id === id)
+  const [session, setSession] = useState<Session | null>(null)
+  const [loading, setLoading] = useState(true)
+  const { players } = useSessionPlayers(id)
 
-  if (!session) {
-    return <div className="text-center py-12">Session non trouvée</div>
+  useEffect(() => {
+    getSession(id).then((s) => {
+      setSession(s)
+      setLoading(false)
+    })
+  }, [id])
+
+  const handleStart = async () => {
+    try {
+      await startSession(id)
+      setSession((s) => s ? { ...s, status: "RUNNING" } : s)
+      toast.success("Session démarrée")
+    } catch { toast.error("Erreur") }
   }
 
-  const participants = [
-    { name: "Alice Dupont", poste: "Développeur", statut: "En attente" },
-    { name: "Bob Martin", poste: "Responsable IT", statut: "Prêt" },
-    { name: "Carol Bernard", poste: "Directrice", statut: "Prêt" },
-  ]
+  const handleFinish = async () => {
+    try {
+      await finishSession(id)
+      setSession((s) => s ? { ...s, status: "FINISHED" } : s)
+      toast.success("Session terminée")
+    } catch { toast.error("Erreur") }
+  }
 
-  const objectives = [
-    "Identifier le vecteur d'attaque",
-    "Isoler le système",
-    "Restaurer les données",
-    "Documenter l'incident",
-  ]
+  if (loading) return (
+    <div className="flex items-center justify-center h-64">
+      <span className="text-muted-foreground">Chargement...</span>
+    </div>
+  )
+  if (!session) return <div className="text-center py-12">Session non trouvée</div>
+
+  const statusColor = session.status === "RUNNING"
+    ? "bg-green-100 text-green-800"
+    : session.status === "PLANNED"
+      ? "bg-gray-100 text-gray-800"
+      : "bg-red-100 text-red-800"
+
+  const statusLabel = session.status === "RUNNING" ? "En cours"
+    : session.status === "PLANNED" ? "Planifiée" : "Terminée"
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold text-foreground">{session.name}</h1>
-        <p className="text-muted-foreground mt-2">Détails de la session d'escape game</p>
+        <p className="text-muted-foreground mt-2">Détails de la session d’escape game</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Scénario</CardTitle>
-          </CardHeader>
+          <CardHeader className="pb-3"><CardTitle className="text-sm font-medium">Scénario</CardTitle></CardHeader>
+          <CardContent><p className="text-lg font-bold text-foreground">{session.scenarioName}</p></CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-3"><CardTitle className="text-sm font-medium">Date</CardTitle></CardHeader>
+          <CardContent><p className="text-lg font-bold text-foreground">{session.date}</p></CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-3"><CardTitle className="text-sm font-medium">Statut</CardTitle></CardHeader>
           <CardContent>
-            <p className="text-lg font-bold text-foreground">{session.scenario}</p>
+            <Badge className={`${statusColor} text-sm font-bold`}>{statusLabel}</Badge>
           </CardContent>
         </Card>
-
         <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Date</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-lg font-bold text-foreground">{session.date}</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Statut</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Badge
-              className={`text-lg font-bold ${
-                session.status === "RUNNING"
-                  ? "bg-green-100 text-green-800"
-                  : session.status === "PLANNED"
-                    ? "bg-gray-100 text-gray-800"
-                    : "bg-red-100 text-red-800"
-              }`}
-            >
-              {session.status === "RUNNING" ? "En cours" : session.status === "PLANNED" ? "Planifiée" : "Terminée"}
-            </Badge>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Joueurs</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-lg font-bold text-foreground">{session.players}</p>
-          </CardContent>
+          <CardHeader className="pb-3"><CardTitle className="text-sm font-medium">Joueurs</CardTitle></CardHeader>
+          <CardContent><p className="text-lg font-bold text-foreground">{players.length}</p></CardContent>
         </Card>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Participants</CardTitle>
-          <CardDescription>Liste des participants à cette session</CardDescription>
+          <CardTitle>Participants en temps réel</CardTitle>
+          <CardDescription>Scores et progression des joueurs</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left font-semibold text-foreground py-3 px-4">Nom</th>
-                  <th className="text-left font-semibold text-foreground py-3 px-4">Poste</th>
-                  <th className="text-left font-semibold text-foreground py-3 px-4">Statut</th>
-                </tr>
-              </thead>
-              <tbody>
-                {participants.map((participant) => (
-                  <tr key={participant.name} className="border-b border-border hover:bg-muted/50 transition">
-                    <td className="py-3 px-4 text-foreground font-medium">{participant.name}</td>
-                    <td className="py-3 px-4 text-muted-foreground">{participant.poste}</td>
-                    <td className="py-3 px-4">
-                      <Badge className="bg-blue-100 text-blue-800">{participant.statut}</Badge>
-                    </td>
+          {players.length === 0 ? (
+            <p className="text-muted-foreground text-center py-6">Aucun joueur connecté pour l’instant.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="text-left font-semibold py-3 px-4">Joueur</th>
+                    <th className="text-left font-semibold py-3 px-4">Score</th>
+                    <th className="text-left font-semibold py-3 px-4">Progression</th>
+                    <th className="text-left font-semibold py-3 px-4">Statut</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Objectifs</CardTitle>
-          <CardDescription>Étapes à accomplir lors de la session</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3">
-            {objectives.map((objective, index) => (
-              <div key={index} className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
-                <input type="checkbox" className="h-4 w-4 rounded" />
-                <span className="text-foreground">{objective}</span>
-              </div>
-            ))}
-          </div>
+                </thead>
+                <tbody>
+                  {players.map((p) => (
+                    <tr key={p.id} className="border-b border-border hover:bg-muted/50 transition">
+                      <td className="py-3 px-4 font-medium">{p.displayName}</td>
+                      <td className="py-3 px-4">{p.score}</td>
+                      <td className="py-3 px-4 w-40">
+                        <div className="flex items-center gap-2">
+                          <Progress value={p.progress} className="flex-1" />
+                          <span className="text-xs text-muted-foreground">{p.progress}%</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4">
+                        <Badge className={
+                          p.status === "FINISHED" ? "bg-green-100 text-green-800" :
+                          p.status === "PLAYING" ? "bg-blue-100 text-blue-800" :
+                          "bg-gray-100 text-gray-800"
+                        }>
+                          {p.status === "FINISHED" ? "Terminé" : p.status === "PLAYING" ? "En jeu" : "En attente"}
+                        </Badge>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </CardContent>
       </Card>
 
       <div className="flex gap-3">
         {session.status === "PLANNED" && (
-          <Button className="flex-1" size="lg">
+          <Button className="flex-1" size="lg" onClick={handleStart}>
             <Play className="h-4 w-4 mr-2" />
             Démarrer la session
           </Button>
         )}
         {session.status === "RUNNING" && (
-          <Button variant="destructive" className="flex-1" size="lg">
+          <Button variant="destructive" className="flex-1" size="lg" onClick={handleFinish}>
             <X className="h-4 w-4 mr-2" />
-            Arrêter la session
+            Terminer la session
           </Button>
         )}
       </div>
