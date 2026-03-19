@@ -1,166 +1,293 @@
 "use client"
 
-import { useState, useEffect, use } from "react"
+import { useEffect, useState, use, useRef } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Progress } from "@/components/ui/progress"
-import { Clock, CheckCircle2, AlertCircle } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
+import VncViewer, { type VncViewerHandle } from "@/components/VncViewer"
+import { useRouter } from "next/navigation"
+import { auth } from "@/lib/firebase"
+import Link from "next/link"
+import { Activity, ArrowLeft, Clock3, Gauge } from "lucide-react"
+import { onIdTokenChanged } from "firebase/auth"
+import { toast } from "sonner"
+
+type VmStatus = "pending" | "cloning" | "starting" | "running" | "ended" | "error"
 
 export default function PlayerSessionPage({ params }: { params: Promise<{ sessionId: string }> }) {
   const { sessionId } = use(params)
-  const [timeLeft, setTimeLeft] = useState(3600) // 1 hour in seconds
-  const [completedObjectives, setCompletedObjectives] = useState<number[]>([])
+  const router = useRouter()
+  const [status, setStatus] = useState<VmStatus>("pending")
+  const [wsUrl, setWsUrl] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [ending, setEnding] = useState(false)
+  const [exactVmStatus, setExactVmStatus] = useState<string | null>(null)
+  const [uptime, setUptime] = useState<number | null>(null)
+  const [pingMs, setPingMs] = useState<number | null>(null)
+  const [checkedAt, setCheckedAt] = useState<string | null>(null)
+  const [firstPollDone, setFirstPollDone] = useState(false)
+  const [authReady, setAuthReady] = useState(false)
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [showVncDebug, setShowVncDebug] = useState(false)
+  const proxmoxToastShownRef = useRef(false)
+  const viewerRef = useRef<VncViewerHandle | null>(null)
+
+  const normalizeStatus = (value: string): VmStatus => {
+    if (value === "pending" || value === "cloning" || value === "starting" || value === "running" || value === "ended" || value === "error") {
+      return value
+    }
+
+    if (value === "stopped" || value === "paused" || value === "unknown") {
+      return "starting"
+    }
+
+    return "pending"
+  }
+
+  const toWebSocketUrl = (path: string): string => {
+    if (path.startsWith("ws://") || path.startsWith("wss://")) return path
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
+    return `${protocol}//${window.location.host}${path}`
+  }
+
+  const formatDuration = (seconds: number) => {
+    const h = Math.floor(seconds / 3600)
+    const m = Math.floor((seconds % 3600) / 60)
+    const s = seconds % 60
+    if (h > 0) return `${h}h ${m}m ${s}s`
+    if (m > 0) return `${m}m ${s}s`
+    return `${s}s`
+  }
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setTimeLeft((prev) => (prev > 0 ? prev - 1 : 0))
-    }, 1000)
-    return () => clearInterval(timer)
+    const unsub = onIdTokenChanged(auth, (user) => {
+      setIsAuthenticated(Boolean(user))
+      setAuthReady(true)
+    })
+
+    return () => unsub()
   }, [])
 
-  const formatTime = (seconds: number) => {
-    const hours = Math.floor(seconds / 3600)
-    const minutes = Math.floor((seconds % 3600) / 60)
-    const secs = seconds % 60
-    return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`
+  useEffect(() => {
+    if (!authReady) return
+
+    if (!isAuthenticated) {
+      setError("Authentification requise")
+      setFirstPollDone(true)
+      return
+    }
+
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    const poll = async () => {
+      try {
+        const token = await auth.currentUser?.getIdToken()
+
+        if (!token) {
+          // Au refresh, le token peut arriver après quelques centaines de ms.
+          timer = setTimeout(poll, 1000)
+          return
+        }
+
+        const response = await fetch(`/api/game/status?sessionId=${sessionId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+
+        const data = await response.json()
+        if (!response.ok) {
+          if (data?.errorType === "PROXMOX_CONNECTION" && !proxmoxToastShownRef.current) {
+            proxmoxToastShownRef.current = true
+            const code = typeof data?.errorCode === "string" ? ` (${data.errorCode})` : ""
+            toast.error(`Connexion Proxmox indisponible${code}. Vérifiez le serveur ou le réseau.`)
+          }
+          setError(data.error ?? "Erreur de statut VM")
+          return
+        }
+
+        setStatus(normalizeStatus(String(data.status ?? "pending")))
+        if (typeof data.wsUrl === "string") setWsUrl(toWebSocketUrl(data.wsUrl))
+        setExactVmStatus(typeof data.exactVmStatus === "string" ? data.exactVmStatus : null)
+        setUptime(typeof data.uptime === "number" ? data.uptime : null)
+        setPingMs(typeof data.pingMs === "number" ? data.pingMs : null)
+        setCheckedAt(typeof data.checkedAt === "string" ? data.checkedAt : null)
+        setError(null)
+        setFirstPollDone(true)
+        proxmoxToastShownRef.current = false
+
+        const normalized = normalizeStatus(String(data.status ?? "pending"))
+        if (normalized !== "running" && normalized !== "ended" && normalized !== "error") {
+          timer = setTimeout(poll, 2000)
+        }
+      } catch {
+        setError("Impossible de joindre le serveur")
+        setFirstPollDone(true)
+      }
+    }
+
+    poll()
+
+    return () => {
+      if (timer) clearTimeout(timer)
+    }
+  }, [sessionId, authReady, isAuthenticated])
+
+  const handleEnd = async () => {
+    try {
+      setEnding(true)
+      const token = await auth.currentUser?.getIdToken()
+
+      if (!token) {
+        setError("Authentification requise")
+        return
+      }
+
+      const response = await fetch("/api/game/end", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ sessionId }),
+      })
+
+      const data = await response.json()
+      if (!response.ok) {
+        setError(data.error ?? "Erreur lors de l'arrêt")
+        return
+      }
+
+      setStatus("ended")
+      router.push("/app/sessions")
+    } finally {
+      setEnding(false)
+    }
   }
 
-  const objectives = [
-    { id: 1, title: "Analyser les logs système", description: "Trouvez les logs suspectes" },
-    { id: 2, title: "Identifier le malware", description: "Scannez et identifiez la menace" },
-    { id: 3, title: "Isoler le système", description: "Déconnectez le système du réseau" },
-    { id: 4, title: "Restaurer les données", description: "Restaurez depuis la dernière sauvegarde" },
-  ]
-
-  const toggleObjective = (id: number) => {
-    setCompletedObjectives((prev) => (prev.includes(id) ? prev.filter((o) => o !== id) : [...prev, id]))
+  const statusLabel: Record<VmStatus, string> = {
+    pending: "En attente",
+    cloning: "Clonage",
+    starting: "Démarrage",
+    running: "En cours",
+    ended: "Terminée",
+    error: "Erreur",
   }
 
-  const progressPercentage = (completedObjectives.length / objectives.length) * 100
+  const renderMetricValue = (value: string | null) => {
+    if (!firstPollDone) {
+      return (
+        <div className="space-y-2 py-1">
+          <div className="h-4 w-20 rounded bg-muted animate-pulse" />
+          <div className="h-3 w-14 rounded bg-muted animate-pulse" />
+        </div>
+      )
+    }
+
+    return <p className="text-lg font-semibold text-foreground">{value ?? "Indisponible"}</p>
+  }
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Top Bar */}
-      <div className="sticky top-0 z-40 border-b border-border bg-card">
-        <div className="px-6 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">Session Active</h1>
-            <p className="text-sm text-muted-foreground">Scénario: Investigation Ransomware</p>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="text-right">
-              <p className="text-sm text-muted-foreground">Temps restant</p>
-              <p className="text-2xl font-bold text-foreground flex items-center gap-2">
-                <Clock className="h-5 w-5" />
-                {formatTime(timeLeft)}
-              </p>
+    <div className="space-y-6 p-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center justify-between">
+            <span>Console VM - Session {sessionId}</span>
+            <Badge>{statusLabel[status]}</Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {error && <p className="text-sm text-destructive">{error}</p>}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+            <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Statut exact VM</p>
+                <Activity className="h-4 w-4 text-muted-foreground" />
+              </div>
+              {renderMetricValue((exactVmStatus ?? status).toUpperCase())}
             </div>
-            <Button variant="destructive">Terminer la session</Button>
+
+            <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Ping Proxmox</p>
+                <Gauge className="h-4 w-4 text-muted-foreground" />
+              </div>
+              {renderMetricValue(pingMs !== null ? `${pingMs} ms` : null)}
+            </div>
+
+            <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Uptime VM</p>
+                <Clock3 className="h-4 w-4 text-muted-foreground" />
+              </div>
+              {renderMetricValue(uptime !== null ? formatDuration(uptime) : null)}
+            </div>
+
+            <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Dernier check</p>
+                <Clock3 className="h-4 w-4 text-muted-foreground" />
+              </div>
+              {renderMetricValue(
+                checkedAt
+                  ? new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "medium" }).format(new Date(checkedAt))
+                  : null
+              )}
+            </div>
           </div>
-        </div>
-      </div>
 
-      {/* Main Content */}
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 p-6">
-        {/* VM Console Area */}
-        <div className="lg:col-span-3">
-          <Card className="h-[600px] bg-black border-muted">
-            <CardHeader className="border-b border-border">
-              <CardTitle className="text-green-500 font-mono">console@escape-vm:~$</CardTitle>
-            </CardHeader>
-            <CardContent className="h-full flex items-center justify-center bg-black">
-              <div className="text-center">
-                <p className="text-green-500 font-mono mb-4">Connexion à la machine virtuelle...</p>
-                <div className="w-8 h-8 border-4 border-green-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
-                <p className="text-green-500 font-mono mt-4 text-sm">Chargement de l'environnement d'escape game</p>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+          {status !== "running" && (
+            <div className="flex items-center justify-center h-120 rounded border border-border bg-muted/40">
+              <p className="text-muted-foreground">Préparation de la VM ({statusLabel[status]})...</p>
+            </div>
+          )}
 
-        {/* Sidebar */}
-        <div className="space-y-6">
-          {/* Progress */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Progression</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <div className="flex justify-between mb-2">
-                  <p className="text-sm font-medium text-foreground">Objectifs complétés</p>
-                  <p className="text-sm text-primary font-bold">
-                    {completedObjectives.length}/{objectives.length}
-                  </p>
+          {status === "running" && wsUrl && (
+            <div className="space-y-3">
+              <div className="rounded-lg border border-border bg-muted/30 p-3">
+                <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="gap-1.5"
+                  onClick={() => viewerRef.current?.sendCtrlAltDel()}
+                >
+                  Ctrl+Alt+Suppr
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="gap-1.5"
+                  onClick={() => viewerRef.current?.reconnect()}
+                >
+                  Reconnecter VNC
+                </Button>
+                <Button
+                  type="button"
+                  variant={showVncDebug ? "default" : "outline"}
+                  className="gap-1.5"
+                  onClick={() => setShowVncDebug((value) => !value)}
+                >
+                  {showVncDebug ? "Masquer debug" : "Afficher debug"}
+                </Button>
                 </div>
-                <Progress value={progressPercentage} className="h-2" />
               </div>
-            </CardContent>
-          </Card>
+              <VncViewer ref={viewerRef} wsUrl={wsUrl} debug={showVncDebug} />
+            </div>
+          )}
 
-          {/* Briefing */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Briefing</CardTitle>
-            </CardHeader>
-            <CardContent className="text-sm space-y-3">
-              <div>
-                <p className="font-semibold text-foreground mb-2">Situation:</p>
-                <p className="text-muted-foreground">
-                  Une attaque par ransomware a été détectée. Vous devez enquêter et contenir la menace.
-                </p>
-              </div>
-              <div>
-                <p className="font-semibold text-foreground mb-2">Objectif:</p>
-                <p className="text-muted-foreground">
-                  Complétez tous les objectifs pour réussir cette session d'escape game.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Objectives */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Objectifs</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {objectives.map((obj) => {
-                const isCompleted = completedObjectives.includes(obj.id)
-                return (
-                  <button
-                    key={obj.id}
-                    onClick={() => toggleObjective(obj.id)}
-                    className={`w-full text-left p-3 rounded-lg border-2 transition ${
-                      isCompleted
-                        ? "border-green-500 bg-green-50 dark:bg-green-900/20"
-                        : "border-border hover:border-primary bg-muted/50"
-                    }`}
-                  >
-                    <div className="flex items-start gap-3">
-                      {isCompleted ? (
-                        <CheckCircle2 className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
-                      ) : (
-                        <AlertCircle className="h-5 w-5 text-muted-foreground flex-shrink-0 mt-0.5" />
-                      )}
-                      <div>
-                        <p
-                          className={`text-sm font-medium ${
-                            isCompleted ? "text-green-700 dark:text-green-400" : "text-foreground"
-                          }`}
-                        >
-                          {obj.title}
-                        </p>
-                        <p className="text-xs text-muted-foreground">{obj.description}</p>
-                      </div>
-                    </div>
-                  </button>
-                )
-              })}
-            </CardContent>
-          </Card>
-        </div>
-      </div>
+          <div className="flex justify-between">
+            <Button asChild variant="outline">
+              <Link href="/app/sessions">
+                <ArrowLeft className="h-4 w-4 mr-2" />
+                Retour au suivi sessions
+              </Link>
+            </Button>
+            <Button variant="destructive" onClick={handleEnd} disabled={ending || status === "ended"}>
+              {ending ? "Arrêt..." : "Terminer la session"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   )
 }
