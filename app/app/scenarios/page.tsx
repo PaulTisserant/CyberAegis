@@ -1,29 +1,15 @@
 "use client"
 
-import { useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Plus, Pencil, Trash2 } from "lucide-react"
-import CreateScenarioModal from "./CreateScenarioModal"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { useScenarios } from "@/lib/hooks/useScenarios"
-import { deleteScenario } from "@/lib/firestore/scenarios"
-import { toast } from "sonner"
+import { useInitializeData } from "@/lib/hooks/useInitializeData"
 
 export default function ScenariosPage() {
   const { user } = useAuth()
+  const { initialized, error: initError } = useInitializeData()
   const { scenarios, loading, error } = useScenarios(user?.organizationId ?? "")
-  const [isModalOpen, setIsModalOpen] = useState(false)
-
-  const handleDelete = async (id: string) => {
-    try {
-      await deleteScenario(id)
-      toast.success("Scénario supprimé")
-    } catch {
-      toast.error("Erreur lors de la suppression")
-    }
-  }
 
   const getDifficultyColor = (difficulty: string) => {
     switch (difficulty) {
@@ -34,6 +20,14 @@ export default function ScenariosPage() {
     }
   }
 
+  if (initError) return <div className="text-destructive">{initError.message}</div>
+
+  if (!initialized) return (
+    <div className="flex items-center justify-center h-64">
+      <span className="text-muted-foreground">Synchronisation des templates Proxmox...</span>
+    </div>
+  )
+
   if (loading) return (
     <div className="flex items-center justify-center h-64">
       <span className="text-muted-foreground">Chargement...</span>
@@ -43,39 +37,27 @@ export default function ScenariosPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div>
         <div>
           <h1 className="text-3xl font-bold text-foreground">Scénarios</h1>
-          <p className="text-muted-foreground mt-1">Gérez vos scénarios d’escape game</p>
+          <p className="text-muted-foreground mt-1">
+            Scénarios synchronisés automatiquement depuis Proxmox (lecture seule)
+          </p>
         </div>
-        <Button onClick={() => setIsModalOpen(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          Créer un scénario
-        </Button>
       </div>
 
       {scenarios.length === 0 ? (
         <div className="text-center py-16 text-muted-foreground">
-          <p>Aucun scénario pour l’instant.</p>
-          <Button className="mt-4" onClick={() => setIsModalOpen(true)}>Créer le premier scénario</Button>
+          <p>Aucun scénario Proxmox disponible pour l’instant.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {scenarios.map((scenario) => (
             <Card key={scenario.id} className="hover:shadow-lg transition">
               <CardHeader>
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <CardTitle className="text-lg">{scenario.name}</CardTitle>
-                    <CardDescription className="mt-1">{scenario.description}</CardDescription>
-                  </div>
-                  <Button
-                    variant="ghost" size="sm"
-                    className="text-destructive hover:bg-destructive/10 ml-2"
-                    onClick={() => handleDelete(scenario.id)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                <div className="flex-1">
+                  <CardTitle className="text-lg">{scenario.name}</CardTitle>
+                  <CardDescription className="mt-1">{scenario.description}</CardDescription>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -93,12 +75,6 @@ export default function ScenariosPage() {
           ))}
         </div>
       )}
-
-      <CreateScenarioModal
-        open={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        organizationId={user?.organizationId ?? ""}
-      />
     </div>
   )
 }

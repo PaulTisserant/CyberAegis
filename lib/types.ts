@@ -23,6 +23,27 @@ export type OrgPlan = "starter" | "professional" | "enterprise"
 
 // ─── Collections Firestore ─────────────────────────────────────────────────
 
+export interface ProxmoxServer {
+  id: string
+  host: string // ex: "82.66.108.121:7000"
+  token: string // ex: "PVEAPIToken=admin_cyberaegis@pam!admin_prov=..."
+  node: string // ex: "pve"
+  organizationId: string
+  createdAt: Timestamp
+  updatedAt: Timestamp
+}
+
+export interface ProxmoxTemplate {
+  id: string
+  vmid: number // ex: 102 (VM template sur Proxmox)
+  name: string // ex: "template-linux-ctf"
+  description?: string
+  organizationId: string
+  proxmoxServerId: string // FK → ProxmoxServer
+  createdAt: Timestamp
+  updatedAt: Timestamp
+}
+
 export interface Scenario {
   id: string
   name: string
@@ -30,6 +51,7 @@ export interface Scenario {
   difficulty: Difficulty
   tags: string[]
   duration: number // minutes
+  proxmoxTemplateId: string // FK → ProxmoxTemplate
   createdAt: Timestamp
   updatedAt: Timestamp
   organizationId: string
@@ -43,6 +65,8 @@ export interface Session {
   scenarioName: string // dénormalisé pour affichage
   date: string // ISO 8601
   status: SessionStatus
+  gameSessionId?: string // id de la session VM Proxmox
+  vmStatus?: GameSessionStatus
   players: number // compteur dénormalisé
   organizationId: string
   createdBy: string // uid Firebase Auth
@@ -100,4 +124,22 @@ export interface Organization {
   maxSessions: number
   createdAt: Timestamp
   isActive: boolean
+}
+
+// ─── Sessions de jeu Proxmox (VM clonées) ────────────────────────────────
+
+export type GameSessionStatus = "pending" | "cloning" | "starting" | "running" | "ended" | "error"
+
+export interface GameSession {
+  id: string
+  scenarioId: string
+  playerId: string // FK → users
+  cloneVmid?: number // générée lors du clone
+  cloneNode?: string // nœud Proxmox où le clone réside
+  status: GameSessionStatus
+  startedAt?: Timestamp
+  endedAt?: Timestamp
+  organizationId: string
+  createdAt: Timestamp
+  updatedAt: Timestamp
 }

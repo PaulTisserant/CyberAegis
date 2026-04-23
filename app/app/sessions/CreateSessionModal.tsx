@@ -45,7 +45,7 @@ export default function CreateSessionModal({ open, onClose, organizationId, crea
         scenarioName: formData.scenarioName,
         date: formData.date,
         status: "PLANNED",
-        players: 0,
+        players: 1,
         organizationId,
         createdBy,
       })

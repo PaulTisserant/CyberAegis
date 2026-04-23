@@ -13,6 +13,8 @@ import {
   onSnapshot,
 } from "firebase/firestore"
 import type { Scenario } from "@/lib/types"
+import { getProxmoxTemplate } from "./proxmox-templates"
+import { getProxmoxServer } from "./proxmox-servers"
 
 const COL = "scenarios"
 
@@ -80,3 +82,20 @@ export async function deleteScenario(id: string): Promise<void> {
     updatedAt: Timestamp.now(),
   })
 }
+
+/**
+ * Récupère les infos complètes d'un scénario avec ses relations Proxmox
+ * Utile pour obtenir : template -> serveur Proxmox
+ */
+export async function getScenarioWithProxmox(id: string) {
+  const scenario = await getScenario(id)
+  if (!scenario) return null
+
+  const template = await getProxmoxTemplate(scenario.proxmoxTemplateId)
+  if (!template) return { scenario, template: null, server: null }
+
+  const server = await getProxmoxServer(template.proxmoxServerId)
+  
+  return { scenario, template, server }
+}
+

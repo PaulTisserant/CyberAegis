@@ -97,6 +97,29 @@ export async function startSession(id: string): Promise<void> {
   })
 }
 
+export async function attachGameSessionToSession(
+  id: string,
+  gameSessionId: string
+): Promise<void> {
+  await updateDoc(doc(db, COL, id), {
+    gameSessionId,
+    vmStatus: "starting",
+    status: "RUNNING",
+    updatedAt: Timestamp.now(),
+  })
+}
+
+export async function updateSessionVmStatus(
+  id: string,
+  vmStatus: "pending" | "cloning" | "starting" | "running" | "ended" | "error"
+): Promise<void> {
+  await updateDoc(doc(db, COL, id), {
+    vmStatus,
+    status: vmStatus === "ended" ? "FINISHED" : vmStatus === "error" ? "FINISHED" : "RUNNING",
+    updatedAt: Timestamp.now(),
+  })
+}
+
 export async function finishSession(id: string): Promise<void> {
   await updateDoc(doc(db, COL, id), {
     status: "FINISHED",
