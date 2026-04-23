@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { synchronizeProxmoxScenarios } from "@/lib/firestore/init-hardcoded-data"
+import { synchronizeProxmoxScenarios } from "@/lib/firestore/proxmox-sync"
 import { isProxmoxTimeoutError } from "@/lib/proxmox-api"
 
 /**

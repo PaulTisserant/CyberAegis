@@ -45,6 +45,7 @@
     "date-fns": "4.1.0",
     "embla-carousel-react": "8.5.1",
     "firebase": "^12.9.0",
+    "firebase-admin": "^13.8.0",
     "input-otp": "1.4.1",
     "lucide-react": "^0.454.0",
     "next": "16.0.10",
@@ -71,9 +72,9 @@
     "@types/ws": "^8.18.1",
     "baseline-browser-mapping": "^2.10.0",
     "postcss": "^8.5",
-    "tsx": "^4.20.6",
     "tailwindcss": "^4.1.9",
     "ts-node": "^10.9.2",
+    "tsx": "^4.20.6",
     "tw-animate-css": "1.3.3",
     "typescript": "^5.9.3"
   }

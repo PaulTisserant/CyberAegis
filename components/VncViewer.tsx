@@ -102,7 +102,7 @@ const VncViewer = forwardRef<VncViewerHandle, Props>(function VncViewer(
     if (!wsRef.current) return
     if (wsRef.current.readyState === WebSocket.OPEN) {
       try {
-        wsRef.current.send(data)
+        wsRef.current.send(data instanceof Uint8Array ? new Uint8Array(data) : data)
       } catch (err) {
         console.error("[VNC send] Erreur d'envoi", err)
       }
@@ -370,7 +370,16 @@ const VncViewer = forwardRef<VncViewerHandle, Props>(function VncViewer(
     pixelFormatRef.current = initialPixelFormat
     updateRfbState("handshake_version")
 
+    let connectTimer: ReturnType<typeof setTimeout> | null = null
+
     const connect = () => {
+      // Réinitialiser l'état pour les reconnexions (le useEffect ne re-run pas à chaque retry)
+      closingRef.current = false
+      handshakeCompletedRef.current = false
+      bufferRef.current = new Uint8Array(0)
+      formatRef.current = { w: 0, h: 0 }
+      pixelFormatRef.current = initialPixelFormat
+
       const ws = new WebSocket(wsUrl)
       ws.binaryType = "arraybuffer"
       wsRef.current = ws
@@ -401,34 +410,53 @@ const VncViewer = forwardRef<VncViewerHandle, Props>(function VncViewer(
         if (closingRef.current) return
         if (suppressAutoReconnectRef.current) return
 
-        if (!handshakeCompletedRef.current) {
-          reconnectAttemptsRef.current += 1
+        // Code 1013 = serveur occupé (verrou session actif, cooldown proxy en cours).
+        // On réessaie après 5s (match le cooldown proxy de 4s) sans incrémenter le compteur.
+        if (event.code === 1013) {
+          reconnectTimerRef.current = setTimeout(connect, 5000)
+          return
         }
 
+        // Incrémenter dans tous les cas (handshake établi ou non).
+        // Si le tunnel s'est établi (handshakeCompleted) mais a fermé anormalement (1006),
+        // réessayer avec un backoff plus long pour laisser QEMU libérer son slot VNC.
+        reconnectAttemptsRef.current += 1
+
         if (reconnectAttemptsRef.current <= MAX_RECONNECT_ATTEMPTS) {
-          const delay = 400 + Math.max(reconnectAttemptsRef.current - 1, 0) * 300
+          // Tunnels établis qui ferment anormalement → délai plus long (5s de base)
+          const baseDelay = handshakeCompletedRef.current ? 5000 : 400
+          const delay = baseDelay + (reconnectAttemptsRef.current - 1) * 1000
           reconnectTimerRef.current = setTimeout(connect, delay)
           return
         }
 
-        setConnectionError("Connexion VNC fermée (échecs répétés du handshake)")
+        setConnectionError(
+          handshakeCompletedRef.current
+            ? "Connexion VNC interrompue par Proxmox (trop de tentatives)"
+            : "Connexion VNC fermée (échecs répétés du handshake)"
+        )
       }
     }
 
-    connect()
+    // Délai anti-StrictMode : React monte/démonte en dev, on attend 350ms pour laisser
+    // le cycle se stabiliser avant d'ouvrir la vraie connexion WebSocket.
+    connectTimer = setTimeout(() => {
+      if (currentMountId !== mountIdRef.current) return
+      connect()
+    }, 350)
 
     return () => {
       closingRef.current = true
+      if (connectTimer) {
+        clearTimeout(connectTimer)
+        connectTimer = null
+      }
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current)
         reconnectTimerRef.current = null
       }
       const activeWs = wsRef.current
       if (activeWs) {
-        // En React StrictMode, fermer une websocket CONNECTING génère un warning en console.
-        // On NE nullifie PAS les événements ici pour éviter de perdre les données en cours de fermeture.
-        // La condition de guard (currentMountId !== mountIdRef.current) dans les listeners
-        // permettra d'ignorer proprement les messages si le composant a été remonté.
         if (activeWs.readyState === WebSocket.OPEN || activeWs.readyState === WebSocket.CONNECTING) {
             activeWs.close()
         }

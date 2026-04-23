@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { auth, db } from "@/lib/firebase"
-import { getScenarioWithProxmox } from "@/lib/firestore/scenarios"
-import { createGameSession, updateGameSession } from "@/lib/firestore/game-sessions"
+import { adminGetScenarioWithProxmox, adminCreateGameSession, adminUpdateGameSession } from "@/lib/firestore/admin-sync"
 import { cloneTemplate, isProxmoxTimeoutError, startVM } from "@/lib/proxmox-api"
 
 /**
@@ -42,7 +40,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "scenarioId requis" }, { status: 400 })
     }
 
-    const scenarioData = await getScenarioWithProxmox(scenarioId)
+    const scenarioData = await adminGetScenarioWithProxmox(scenarioId)
     if (!scenarioData || !scenarioData.scenario) {
       return NextResponse.json({ error: "Scénario introuvable" }, { status: 404 })
     }
@@ -62,7 +60,7 @@ export async function POST(request: NextRequest) {
     const actualOrgId = scenario.organizationId
 
     // Créer la GameSession en DB (avant d'appeler Proxmox)
-    const gameSessionId = await createGameSession({
+    const gameSessionId = await adminCreateGameSession({
       scenarioId,
       playerId: userId,
       status: "cloning",
@@ -91,11 +89,10 @@ export async function POST(request: NextRequest) {
       await startVM(server.host, server.token, server.node, cloneVmid)
 
       // Mettre à jour la GameSession avec les infos du clone
-      await updateGameSession(gameSessionId, {
+      await adminUpdateGameSession(gameSessionId, {
         cloneVmid,
         cloneNode: server.node,
         status: "starting",
-        startedAt: new Date() as any,
       })
 
       return NextResponse.json({
@@ -105,7 +102,7 @@ export async function POST(request: NextRequest) {
       })
     } catch (err: any) {
       // Si erreur lors du clone/start, marquer la session comme erreur
-      await updateGameSession(gameSessionId, { status: "error" })
+      await adminUpdateGameSession(gameSessionId, { status: "error" })
 
       if (isProxmoxTimeoutError(err)) {
         return NextResponse.json(

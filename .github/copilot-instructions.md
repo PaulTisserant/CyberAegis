@@ -1,5 +1,7 @@
 # CyberAegis — Instructions GitHub Copilot
 
+Tu es un développeur **expert React/Next.js/Firebase** et un **véritable pro de l'intégration Proxmox, de l'orchestration de VM et de l'affichage interactif VNC via WebSockets**.
+
 ## Présentation du projet
 
 CyberAegis est une **plateforme SaaS d'escape game cybersécurité** destinée aux entreprises souhaitant sensibiliser leurs équipes aux risques informatiques. Le produit permet de créer et gérer des scénarios d'escape game (phishing, ransomware, forensics, etc.), d'organiser des sessions de formation et de suivre les performances des joueurs via des rapports détaillés.

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getGameSession, updateGameSession } from "@/lib/firestore/game-sessions"
-import { getScenarioWithProxmox } from "@/lib/firestore/scenarios"
-import { getVMStatus, isProxmoxTimeoutError } from "@/lib/proxmox-api"
+import { adminGetGameSession as getGameSession, adminUpdateGameSession as updateGameSession, adminGetScenarioWithProxmox as getScenarioWithProxmox } from "@/lib/firestore/admin-sync"
+import { getVMStatus, startVM, isProxmoxTimeoutError } from "@/lib/proxmox-api"
 
 /**
  * GET /api/game/status?sessionId=X
@@ -80,6 +79,28 @@ export async function GET(request: NextRequest) {
           status: "running",
           exactVmStatus: vmStatus.status,
           wsUrl: `/api/vnc-proxy?sessionId=${sessionId}`,
+          cloneVmid,
+          cloneNode,
+          uptime: vmStatus.uptime,
+          pingMs,
+          checkedAt,
+        })
+      }
+
+      // VM arrêtée → la redémarrer automatiquement
+      if (vmStatus.status === "stopped") {
+        console.log(`[API /game/status] VM ${cloneVmid} arrêtée — redémarrage automatique`)
+        try {
+          await startVM(server.host, server.token, cloneNode, cloneVmid)
+          await updateGameSession(sessionId, { status: "starting" })
+        } catch (startErr) {
+          console.error("[API /game/status] Échec du redémarrage automatique :", startErr)
+        }
+
+        return NextResponse.json({
+          status: "starting",
+          exactVmStatus: vmStatus.status,
+          message: "VM arrêtée — redémarrage en cours",
           cloneVmid,
           cloneNode,
           uptime: vmStatus.uptime,

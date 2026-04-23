@@ -1,16 +1,16 @@
 import "server-only"
 import type { Difficulty } from "@/lib/types"
 import {
-  createProxmoxServer,
-  getProxmoxServers,
-  updateProxmoxServer,
-} from "./proxmox-servers"
-import {
-  createProxmoxTemplate,
-  getProxmoxTemplates,
-  updateProxmoxTemplate,
-} from "./proxmox-templates"
-import { createScenario, getScenarios, updateScenario } from "./scenarios"
+  adminCreateProxmoxServer as createProxmoxServer,
+  adminGetProxmoxServers as getProxmoxServers,
+  adminUpdateProxmoxServer as updateProxmoxServer,
+  adminCreateProxmoxTemplate as createProxmoxTemplate,
+  adminGetProxmoxTemplates as getProxmoxTemplates,
+  adminUpdateProxmoxTemplate as updateProxmoxTemplate,
+  adminCreateScenario as createScenario,
+  adminGetScenarios as getScenarios,
+  adminUpdateScenario as updateScenario,
+} from "./admin-sync"
 import { listVMs } from "@/lib/proxmox-api"
 
 // ─── Configuration serveur (via .env) ─────────────────────────────────────
@@ -18,6 +18,7 @@ import { listVMs } from "@/lib/proxmox-api"
 function getProxmoxSyncEnvConfig() {
   const host = process.env.PROXMOX_HOST
   const token = process.env.PROXMOX_TOKEN
+  console.log(token)
   const node = process.env.PROXMOX_NODE
   const templatePrefix = process.env.PROXMOX_TEMPLATE_PREFIX
 

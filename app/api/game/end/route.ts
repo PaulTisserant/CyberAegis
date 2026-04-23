@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { auth } from "@/lib/firebase"
-import { getGameSession, updateGameSession } from "@/lib/firestore/game-sessions"
-import { getScenarioWithProxmox } from "@/lib/firestore/scenarios"
+import { adminGetGameSession as getGameSession, adminUpdateGameSession as updateGameSession, adminGetScenarioWithProxmox as getScenarioWithProxmox } from "@/lib/firestore/admin-sync"
 import { deleteVM, isProxmoxTimeoutError, stopVM } from "@/lib/proxmox-api"
 
 /**
@@ -71,7 +69,7 @@ export async function POST(request: NextRequest) {
         await stopVM(server.host, server.token, cloneNode, cloneVmid)
       } catch (err) {
         console.warn(`[Game] Erreur lors de l'arrêt de la VM : ${err}`)
-        // Continuer malgré l'erreur
+        // Continuer malgré l'erreur (VM peut déjà être arrêtée ou absente)
       }
 
       // Attendre 1s après arrêt
@@ -79,7 +77,17 @@ export async function POST(request: NextRequest) {
 
       // Étape 2 : Supprimer la VM
       console.log(`[Game] Deleting VM ${cloneVmid}...`)
-      await deleteVM(server.host, server.token, cloneNode, cloneVmid)
+      try {
+        await deleteVM(server.host, server.token, cloneNode, cloneVmid)
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err)
+        // VM introuvable sur Proxmox (déjà supprimée ou jamais créée) → on continue
+        if (msg.includes("does not exist") || msg.includes("HTTP 500") || msg.includes("HTTP 404")) {
+          console.warn(`[Game] VM ${cloneVmid} introuvable sur Proxmox, ignoré : ${msg}`)
+        } else {
+          throw err
+        }
+      }
 
       // Étape 3 : Marquer la session comme ended
       await updateGameSession(sessionId, {
