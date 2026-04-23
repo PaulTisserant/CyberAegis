@@ -68,6 +68,60 @@ Il y a **deux WebSockets** lors du gameplay :
 1. **Navigateur ↔ Next.js** : connexion locale, sans authentification (le proxy la neutralise)
 2. **Next.js ↔ Proxmox** : connexion `wss://` avec token + ticket VNC éphémère (60s)
 
+```mermaid
+flowchart TB
+    subgraph Public["🌐 Site Vitrine (Public)"]
+        Landing["/  Page d'accueil"]
+        Features["/features"]
+        Pricing["/pricing"]
+        Security["/security"]
+        Contact["/contact"]
+    end
+
+    subgraph Auth["🔐 Authentification"]
+        Login["/auth/login"]
+        Register["/auth/register"]
+        FirebaseAuth["Firebase Auth\n(JWT + Cookie session)"]
+    end
+
+    subgraph SaaS["🖥️ Espace SaaS (Authentifié)"]
+        Dashboard["/app — Dashboard"]
+        Scenarios["/app/scenarios"]
+        Sessions["/app/sessions"]
+        Users["/app/users"]
+        Reports["/app/reports"]
+    end
+
+    subgraph Player["🎮 Interface Joueur"]
+        GamePage["/app/play/[sessionId]/game\n(noVNC plein écran)"]
+    end
+
+    subgraph API["⚙️ API Routes (Next.js)"]
+        APIStart["/api/game/start"]
+        APIStatus["/api/game/status"]
+        APIEnd["/api/game/end"]
+        APIProxy["/api/vnc-proxy\n(WebSocket)"]
+    end
+
+    subgraph Backend["🗄️ Backend"]
+        Firestore[("Firebase Firestore\n(données temps réel)")]
+        ProxmoxREST["Proxmox VE\nAPI REST"]
+        VMTemplate["VM Templates\n(scénarios pré-configurés)"]
+        VMClone["VM Clones\n(éphémères, par session)"]
+    end
+
+    Login --> FirebaseAuth --> Firestore
+    SaaS --> Firestore
+    Sessions --> APIStart --> ProxmoxREST
+    APIStatus --> ProxmoxREST
+    ProxmoxREST --> VMTemplate --> VMClone
+    GamePage --> APIProxy
+    APIProxy <--> VMClone
+    GamePage --> APIEnd --> ProxmoxREST
+    APIStart --> Firestore
+    APIEnd --> Firestore
+```
+
 ---
 
 ## 2. Modèle de données (Firebase Firestore - NoSQL)
@@ -111,6 +165,68 @@ interface GameSession {
   started_at: Timestamp   // depuis firebase/firestore
   ended_at: Timestamp     // depuis firebase/firestore
 }
+```
+
+### Schéma des relations entre collections
+
+```mermaid
+erDiagram
+    proxmox_servers {
+        string id PK
+        string host
+        string token
+        string node
+    }
+
+    scenarios {
+        string id PK
+        string name
+        string description
+        int template_vmid
+        string proxmox_id FK
+        int duration_sec
+    }
+
+    game_sessions {
+        string id PK
+        string scenario_id FK
+        string player_id FK
+        int clone_vmid
+        string clone_node
+        string status
+        Timestamp started_at
+        Timestamp ended_at
+    }
+
+    users {
+        string id PK
+        string firstName
+        string lastName
+        string email
+        string role
+        string organizationId
+        boolean isActive
+    }
+
+    proxmox_servers ||--o{ scenarios : "héberge les templates de"
+    scenarios ||--o{ game_sessions : "est joué dans"
+    users ||--o{ game_sessions : "joue"
+```
+
+### Cycle de vie d'une session de jeu (VM)
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending : Session créée en DB
+    pending --> cloning : POST /qemu/{templateVmid}/clone
+    cloning --> starting : Clone créé → POST /status/start
+    starting --> running : VM démarrée (poll status/current)
+    running --> ended : POST /api/game/end\n(stop + delete VM)
+    cloning --> error : Échec API Proxmox
+    starting --> error : Timeout démarrage (60s)
+    running --> error : Perte de connexion
+    ended --> [*]
+    error --> [*]
 ```
 
 ---
@@ -215,6 +331,39 @@ Joueur → polling GET /api/game/status?sessionId=Y
   └─ Quand running → retourne { status: "running", wsUrl: "/api/vnc-proxy?sessionId=Y" }
        ↓
 Joueur ouvre le composant VNC avec wsUrl
+```
+
+```mermaid
+sequenceDiagram
+    actor Joueur
+    participant App as Next.js App
+    participant Firestore
+    participant Proxmox as Proxmox API REST
+    participant VM as VM Clonée
+
+    Joueur->>App: POST /api/game/start?scenarioId=X
+    App->>Firestore: Lire proxmox_servers & scenarios
+    Firestore-->>App: host, token, node, template_vmid
+
+    App->>Proxmox: POST /qemu/{templateVmid}/clone (full=0)
+    Note over Proxmox: Clone lié quasi-instantané (~2s)
+    Proxmox-->>App: cloneVmid (UPID)
+
+    App->>Firestore: game_session {status: "cloning", clone_vmid}
+    App->>Proxmox: POST /qemu/{cloneVmid}/status/start
+    Proxmox-->>App: OK
+    App->>Firestore: game_session {status: "starting"}
+    App-->>Joueur: { sessionId, status: "starting" }
+
+    loop Polling toutes les 2s (max 60s)
+        Joueur->>App: GET /api/game/status?sessionId=Y
+        App->>Proxmox: GET /qemu/{cloneVmid}/status/current
+        Proxmox-->>App: { status: "running" }
+        App->>Firestore: game_session {status: "running"}
+        App-->>Joueur: { status: "running", wsUrl: "/api/vnc-proxy?sessionId=Y" }
+    end
+
+    Joueur->>App: WebSocket ws://app/api/vnc-proxy?sessionId=Y
 ```
 
 ### 5.2 Cloner le template
@@ -332,6 +481,54 @@ wss://{host}/api2/json/nodes/{node}/qemu/{clone_vmid}/vncwebsocket?port={port}&v
 
 Le ticket **doit être URL-encoded** (`encodeURIComponent` en JS, `urllib.parse.quote` en Python),
 car il contient des caractères spéciaux (`:`, `@`, `+`, `/`).
+
+```mermaid
+sequenceDiagram
+    actor Joueur
+    participant Browser as Navigateur (VncViewer)
+    participant NextJS as Serveur Next.js (vncProxy.ts)
+    participant Proxmox as Proxmox API REST
+    participant VM as VM — Serveur VNC
+
+    Joueur->>Browser: Ouvre /app/play/[sessionId]/game
+    Browser->>NextJS: WebSocket ws://…/api/vnc-proxy?sessionId=Y
+    NextJS->>Proxmox: POST /qemu/{vmid}/vncproxy (websocket=1)
+    Proxmox-->>NextJS: { ticket, port, user }
+    NextJS->>VM: WSS /vncwebsocket?port={port}&vncticket={ticket}
+
+    Note over NextJS,VM: Handshake RFB côté Proxmox
+    VM-->>NextJS: "RFB 003.008\n"
+    NextJS->>VM: "RFB 003.008\n"
+    VM-->>NextJS: [N, type1=2 (VNC Auth)]
+    NextJS->>VM: [0x02] (choisit VNC Auth)
+    VM-->>NextJS: Challenge 16 bytes
+    NextJS->>VM: DES_ECB_encrypt(challenge, ticket[0:8] bit-reversed)
+    VM-->>NextJS: SecurityResult 0x00000000 (OK)
+    NextJS->>VM: ClientInit [0x01]
+    VM-->>NextJS: ServerInit (résolution, PixelFormat, nom)
+
+    Note over Browser,NextJS: Mini-handshake RFB côté navigateur (No Auth)
+    NextJS->>Browser: "RFB 003.008\n"
+    Browser->>NextJS: "RFB 003.008\n"
+    NextJS->>Browser: [0x01, 0x01] (1 type: None)
+    Browser->>NextJS: [0x01]
+    NextJS->>Browser: [0x00,0x00,0x00,0x00] (SecurityResult OK)
+    Browser->>NextJS: ClientInit [0x01]
+    NextJS->>Browser: ServerInit (retransmis depuis Proxmox)
+
+    loop Tunnel binaire bidirectionnel
+        Browser->>NextJS: KeyEvent / PointerEvent / FBUpdateRequest
+        NextJS->>VM: Forward RFB
+        VM-->>NextJS: FramebufferUpdate (pixels)
+        NextJS-->>Browser: Forward pixels
+    end
+
+    Joueur->>Browser: Ferme la page
+    Browser->>NextJS: WebSocket close
+    NextJS->>Proxmox: POST /qemu/{vmid}/status/stop
+    NextJS->>Proxmox: DELETE /qemu/{vmid}
+    NextJS->>Proxmox: Firestore game_session {status: "ended"}
+```
 
 ---
 
