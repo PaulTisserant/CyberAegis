@@ -297,7 +297,9 @@ const VncViewer = forwardRef<VncViewerHandle, Props>(function VncViewer(
         canvasRef.current.height = h
       }
 
-      send(new Uint8Array([2, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 1, 0xff, 0xff, 0xff, 0x21]))
+      // Le proxy a déjà envoyé SetPixelFormat + SetEncodings directement à QEMU.
+      // Le VncViewer n'envoie que FramebufferUpdateRequest — le format est toujours 32bpp little-endian RGB.
+      pixelFormatRef.current = { bpp: 32, bigEndian: 0, redShift: 16, greenShift: 8, blueShift: 0 }
       updateRfbState("connected")
       handshakeCompletedRef.current = true
       reconnectAttemptsRef.current = 0

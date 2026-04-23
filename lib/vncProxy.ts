@@ -275,6 +275,40 @@ export async function handleVncProxy(clientWs: WebSocket, sessionId: string): Pr
     // PHASE 1 : handshake RFB avec Proxmox via WsStream
     const { serverInit, leftover: proxmoxLeftover } = await performRfbHandshakeWithProxmox(proxmoxWs, vncPassword, sessionLog)
 
+    // Envoyer SetPixelFormat + SetEncodings directement à QEMU immédiatement après le handshake.
+    // C'est ici (et non depuis le navigateur) qu'on négocie le format pixel et les encodages,
+    // garantissant que QEMU reçoit ces messages dans le bon état avant le relay.
+    const setupSetPixelFormat = Buffer.from([
+      0, 0, 0, 0,       // type=0 (SetPixelFormat), 3 bytes padding
+      32, 24, 0, 1,     // bpp=32, depth=24, bigEndian=0, trueColour=1
+      0, 255, 0, 255,   // redMax=255 (BE uint16), greenMax=255 (BE uint16)
+      0, 255,           // blueMax=255 (BE uint16)
+      16, 8, 0,         // redShift=16, greenShift=8, blueShift=0
+      0, 0, 0,          // 3 bytes padding
+    ])
+    proxmoxWs.send(setupSetPixelFormat, { binary: true })
+
+    const setupSetEncodings = Buffer.from([
+      2, 0, 0, 2,       // type=2 (SetEncodings), padding, count=2
+      0, 0, 0, 0,       // Raw (0)
+      0, 0, 0, 1,       // CopyRect (1)
+    ])
+    proxmoxWs.send(setupSetEncodings, { binary: true })
+    sessionLog("setup RFB envoye vers QEMU", { spfBytes: setupSetPixelFormat.length, setEncBytes: setupSetEncodings.length })
+
+    // Envoyer un FramebufferUpdateRequest (1×1 px) immédiatement après le setup.
+    // Sans ça, pveproxy/QEMU considère la connexion inactive et ferme avec code 1006
+    // pendant les ~200ms du handshake navigateur qui suit.
+    const keepaliveFbr = Buffer.from([
+      3, 0,   // type=3 (FramebufferUpdateRequest), incremental=0
+      0, 0,   // x=0
+      0, 0,   // y=0
+      0, 1,   // width=1
+      0, 1,   // height=1
+    ])
+    proxmoxWs.send(keepaliveFbr, { binary: true })
+    sessionLog("keepalive FBR envoye vers QEMU (1x1)")
+
     // Buffer les messages Proxmox pendant le handshake browser
     const proxmoxPendingBuffer: Buffer[] = []
     const proxmoxBufferHandler = (data: WebSocket.RawData) => {
@@ -284,17 +318,21 @@ export async function handleVncProxy(clientWs: WebSocket, sessionId: string): Pr
       console.log("[VNC DIAG] proxmox msg recu (buffer)", { bytes: chunk.length, hex })
     }
     proxmoxWs.on("message", proxmoxBufferHandler)
-
-    // Retirer early close handler (sera remplacé par le handler tunnel)
-    proxmoxWs.off("close", earlyCloseHandler)
+    // NE PAS retirer earlyCloseHandler ici — il doit rester actif pendant tout le handshake navigateur
 
     // PHASE 2 : handshake no-auth avec le navigateur via WsStream dedie
     const clientStream = new WsStream(clientWs)
     await performBrowserNoAuthHandshake(clientStream, clientWs, serverInit, sessionLog)
     const clientLeftover = clientStream.detach()
 
-    // Retirer le buffer handler temporaire
+    // Retirer les handlers temporaires maintenant que le handshake navigateur est termine
     proxmoxWs.off("message", proxmoxBufferHandler)
+    proxmoxWs.off("close", earlyCloseHandler)
+
+    // Si Proxmox a ferme pendant le handshake navigateur, abandonner proprement
+    if (proxmoxClosedEarly) {
+      throw new Error("Proxmox a ferme la connexion VNC pendant le handshake navigateur")
+    }
 
     // PHASE 3 : relay bidirectionnel
     tunnelEstablished = true
@@ -385,10 +423,16 @@ export async function handleVncProxy(clientWs: WebSocket, sessionId: string): Pr
         cleanup()
         resolve()
       }
+      // Vérifier si Proxmox est déjà fermé AVANT d'enregistrer les listeners
+      // (évite une Promise qui ne se résout jamais si la WS est déjà CLOSED)
+      if (!proxmoxWs || proxmoxWs.readyState === WebSocket.CLOSED || proxmoxWs.readyState === WebSocket.CLOSING) {
+        done("proxmox(already-closed)")
+        return
+      }
       clientWs.once("close", (code) => done("client(" + code + ")"))
       clientWs.once("error", (e) => done("client-error(" + String(e) + ")"))
-      proxmoxWs!.once("close", (code) => done("proxmox(" + code + ")"))
-      proxmoxWs!.once("error", (e) => done("proxmox-error(" + String(e) + ")"))
+      proxmoxWs.once("close", (code) => done("proxmox(" + code + ")"))
+      proxmoxWs.once("error", (e) => done("proxmox-error(" + String(e) + ")"))
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : "Erreur proxy VNC"
