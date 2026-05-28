@@ -41,6 +41,8 @@ export default function ReportsPage() {
                   <tr className="border-b border-border">
                     <th className="text-left font-semibold text-foreground py-3 px-4">Session</th>
                     <th className="text-left font-semibold text-foreground py-3 px-4">Type</th>
+                    <th className="text-left font-semibold text-foreground py-3 px-4">Joueurs</th>
+                    <th className="text-left font-semibold text-foreground py-3 px-4">Complétion</th>
                     <th className="text-left font-semibold text-foreground py-3 px-4">Date de génération</th>
                     <th className="text-left font-semibold text-foreground py-3 px-4">Actions</th>
                   </tr>
@@ -51,6 +53,22 @@ export default function ReportsPage() {
                       <td className="py-3 px-4 text-foreground font-medium">{report.sessionName}</td>
                       <td className="py-3 px-4">
                         <Badge variant="outline">{report.type}</Badge>
+                      </td>
+                      <td className="py-3 px-4 text-muted-foreground">
+                        {report.data?.totalPlayers ?? "—"}
+                      </td>
+                      <td className="py-3 px-4">
+                        {report.data?.completionRate != null ? (
+                          <span className={`font-medium ${
+                            report.data.completionRate >= 80 ? "text-green-600" :
+                            report.data.completionRate >= 50 ? "text-yellow-600" :
+                            "text-red-600"
+                          }`}>
+                            {report.data.completionRate}%
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
                       </td>
                       <td className="py-3 px-4 text-muted-foreground">
                         {report.generatedAt.toDate().toLocaleDateString("fr-FR")}

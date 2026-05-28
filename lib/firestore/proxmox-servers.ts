@@ -4,6 +4,7 @@ import {
   doc,
   addDoc,
   updateDoc,
+  deleteDoc,
   getDocs,
   getDoc,
   query,
@@ -69,4 +70,8 @@ export async function updateProxmoxServer(
     ...data,
     updatedAt: Timestamp.now(),
   })
+}
+
+export async function deleteProxmoxServer(id: string): Promise<void> {
+  await deleteDoc(doc(db, COL, id))
 }

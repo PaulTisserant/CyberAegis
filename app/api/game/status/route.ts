@@ -119,9 +119,34 @@ export async function GET(request: NextRequest) {
         pingMs,
         checkedAt,
       })
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("[API /game/status] Erreur Proxmox :", err)
-      const errCode = typeof err?.code === "string" ? err.code : "UNKNOWN"
+      const errMsg = err instanceof Error ? err.message : String(err)
+      const errCode = (err as { code?: string })?.code ?? "UNKNOWN"
+
+      // La VM n'existe plus sur Proxmox (supprimée manuellement ou par cleanup)
+      const vmNotFound =
+        errMsg.includes("does not exist") ||
+        errMsg.includes("Configuration file") ||
+        errMsg.includes("no such vm") ||
+        errMsg.includes("HTTP 500")
+
+      if (vmNotFound) {
+        console.log(`[API /game/status] VM ${cloneVmid} introuvable — session marquée comme terminée`)
+        try {
+          await updateGameSession(sessionId, { status: "ended" })
+        } catch (updateErr) {
+          console.error("[API /game/status] Impossible de mettre à jour la session :", updateErr)
+        }
+        return NextResponse.json({
+          status: "ended",
+          message: "La VM n'existe plus sur Proxmox",
+          cloneVmid,
+          cloneNode,
+          checkedAt: new Date().toISOString(),
+        })
+      }
+
       const timeout = isProxmoxTimeoutError(err)
       return NextResponse.json(
         {
@@ -130,16 +155,14 @@ export async function GET(request: NextRequest) {
             : "Impossible de vérifier le statut Proxmox",
           errorType: "PROXMOX_CONNECTION",
           errorCode: timeout ? "ETIMEDOUT" : errCode,
-          message: err?.message ?? "Connexion Proxmox indisponible",
+          message: errMsg || "Connexion Proxmox indisponible",
         },
         { status: timeout ? 504 : 503 }
       )
     }
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("[API /game/status] Erreur :", err)
-    return NextResponse.json(
-      { error: err.message || "Erreur serveur" },
-      { status: 500 }
-    )
+    const msg = err instanceof Error ? err.message : "Erreur serveur"
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }

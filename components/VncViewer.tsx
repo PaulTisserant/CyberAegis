@@ -297,13 +297,24 @@ const VncViewer = forwardRef<VncViewerHandle, Props>(function VncViewer(
         canvasRef.current.height = h
       }
 
-      // Le proxy a déjà envoyé SetPixelFormat + SetEncodings directement à QEMU.
-      // Le VncViewer n'envoie que FramebufferUpdateRequest — le format est toujours 32bpp little-endian RGB.
-      pixelFormatRef.current = { bpp: 32, bigEndian: 0, redShift: 16, greenShift: 8, blueShift: 0 }
+      // On garde le pixel format réel renvoyé par le serveur (cohérent avec le
+      // prototype Python qui ne force aucun format). drawRaw a un fast-path pour
+      // LE 32bpp BGRA (cas QEMU standard) et un chemin générique pour le reste.
+
+      // SetEncodings (type=2) — Raw (0), CopyRect (1) et DesktopSize pseudo-encoding (-223).
+      send(new Uint8Array([
+        2, 0, 0, 3,             // type=2, padding, count=3 (BE)
+        0, 0, 0, 0,             // Raw (0)
+        0, 0, 0, 1,             // CopyRect (1)
+        0xff, 0xff, 0xff, 0x21, // DesktopSize (-223)
+      ]))
+
       updateRfbState("connected")
       handshakeCompletedRef.current = true
       reconnectAttemptsRef.current = 0
       bufferRef.current = new Uint8Array(0)
+      // Envoyer le FBR immédiatement après SetEncodings, comme le fait le prototype
+      // Python (escape-game.html). pveproxy/QEMU attend les deux messages ensemble.
       sendFramebufferUpdateRequest(false)
       return
     }
@@ -416,6 +427,13 @@ const VncViewer = forwardRef<VncViewerHandle, Props>(function VncViewer(
         // On réessaie après 5s (match le cooldown proxy de 4s) sans incrémenter le compteur.
         if (event.code === 1013) {
           reconnectTimerRef.current = setTimeout(connect, 5000)
+          return
+        }
+
+        // Codes applicatifs non récupérables — pas la peine de reboucler.
+        // 1008 = policy violation (ex: VNC sur template), 1011 = erreur serveur de config.
+        if (event.code === 1008 || event.code === 1011) {
+          setConnectionError(event.reason || "Connexion VNC refusée par le serveur")
           return
         }
 

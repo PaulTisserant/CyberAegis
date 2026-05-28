@@ -14,6 +14,7 @@ const navigation = [
   { name: "Dashboard", href: "/app" },
   { name: "Sessions", href: "/app/sessions" },
   { name: "Scénarios", href: "/app/scenarios" },
+  { name: "Infrastructure VM", href: "/app/proxmox" },
   { name: "Utilisateurs", href: "/app/users" },
   { name: "Rapports", href: "/app/reports" },
 ]

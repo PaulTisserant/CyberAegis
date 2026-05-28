@@ -124,11 +124,6 @@ Proxmox utilise des **tokens API** au format :
 PVEAPIToken=<user>@<realm>!<tokenid>=<secret>
 ```
 
-Token de référence (celui utilisé dans `serveur.py`) :
-```
-PVEAPIToken=admin_cyberaegis@pam!admin_prov=fa3cff4d-0614-48ac-aa93-54adca766fa4
-```
-
 Ce token doit être envoyé dans le header `Authorization` de **toutes** les requêtes vers
 l'API Proxmox (REST et WebSocket).
 

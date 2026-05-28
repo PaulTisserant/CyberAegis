@@ -18,8 +18,34 @@ export type UserRole = "ADMIN" | "MANAGER" | "ANIMATOR" | "PLAYER"
 export type SessionStatus = "PLANNED" | "RUNNING" | "FINISHED"
 export type PlayerStatus = "WAITING" | "PLAYING" | "FINISHED"
 export type Difficulty = "Débutant" | "Intermédiaire" | "Avancé"
+export type FlagDifficulty = "Facile" | "Moyen" | "Difficile" | "Expert"
 export type ReportType = "Session" | "Joueur"
 export type OrgPlan = "starter" | "professional" | "enterprise"
+
+// ─── Flags de scénario ─────────────────────────────────────────────────────
+
+export interface ScenarioFlag {
+  id: string // slug court ex: "first_blood"
+  label: string // libellé visible ex: "Le secret du bureau"
+  value: string // chaîne attendue ex: "FLAG{first_blood}" (jamais exposée au joueur)
+  difficulty: FlagDifficulty
+  weight: number // dérivé auto de difficulty
+  points: number // dérivé auto = weight × BASE_POINTS
+  hint?: string
+  order: number // ordre d'affichage
+}
+
+// Vue publique d'un flag (sans `value`) — envoyée au client joueur
+export type PublicScenarioFlag = Omit<ScenarioFlag, "value">
+
+export interface SubmittedFlag {
+  flagId: string
+  submittedAt: Timestamp
+  timeSincePrevious: number // secondes depuis le flag précédent (ou joinedAt pour le 1er)
+  difficulty: FlagDifficulty // snapshot
+  weight: number // snapshot
+  points: number // snapshot — figé même si le scénario est modifié après
+}
 
 // ─── Collections Firestore ─────────────────────────────────────────────────
 
@@ -52,6 +78,7 @@ export interface Scenario {
   tags: string[]
   duration: number // minutes
   proxmoxTemplateId: string // FK → ProxmoxTemplate
+  flags?: ScenarioFlag[]
   createdAt: Timestamp
   updatedAt: Timestamp
   organizationId: string
@@ -84,6 +111,9 @@ export interface Player {
   joinedAt: Timestamp
   completedAt?: Timestamp
   status: PlayerStatus
+  submittedFlags?: SubmittedFlag[]
+  lastFlagAt?: Timestamp
+  flagsTotal?: number // cache du nb total de flags du scénario
 }
 
 export interface User {
@@ -99,6 +129,18 @@ export interface User {
   isActive: boolean
 }
 
+export interface PlayerReportData {
+  userId: string
+  displayName: string
+  score: number
+  progress: number         // 0-100
+  status: PlayerStatus
+  flagsFound: number
+  totalFlags: number
+  durationSeconds: number  // temps depuis joinedAt jusqu'à completedAt (ou fin de session)
+  submittedFlags: SubmittedFlag[]
+}
+
 export interface Report {
   id: string
   sessionId: string
@@ -111,9 +153,12 @@ export interface Report {
 
 export interface ReportData {
   totalPlayers: number
-  completionRate: number // 0-100
+  completionRate: number   // 0-100 : % de joueurs FINISHED
   averageScore: number
-  averageDuration: number // minutes
+  averageDuration: number  // minutes (moyenne de durationSeconds / 60)
+  totalFlags: number       // nb total de flags du scénario
+  maxScore: number         // score maximum atteignable
+  players: PlayerReportData[]
 }
 
 export interface Organization {
@@ -134,6 +179,7 @@ export interface GameSession {
   id: string
   scenarioId: string
   playerId: string // FK → users
+  parentSessionId?: string // FK → sessions (ID du doc dans la collection sessions)
   cloneVmid?: number // générée lors du clone
   cloneNode?: string // nœud Proxmox où le clone réside
   status: GameSessionStatus

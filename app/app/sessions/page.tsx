@@ -1,10 +1,10 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Plus, Play, Eye, SquareTerminal } from "lucide-react"
+import { Plus, Play, Eye, SquareTerminal, FileText } from "lucide-react"
 import CreateSessionModal from "./CreateSessionModal"
 import Link from "next/link"
 import { useAuth } from "@/lib/auth/AuthContext"
@@ -15,6 +15,7 @@ import {
   finishSession,
   updateSessionVmStatus,
 } from "@/lib/firestore/sessions"
+import { getReportBySessionId, generateSessionReport } from "@/lib/firestore/reports"
 import { toast } from "sonner"
 
 export default function SessionsPage() {
@@ -24,6 +25,20 @@ export default function SessionsPage() {
   const { scenarios } = useScenarios(orgId)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [statusFilter, setStatusFilter] = useState<"ACTIVE" | "RUNNING" | "PLANNED" | "FINISHED" | "ALL">("ACTIVE")
+  const [reportIds, setReportIds] = useState<Record<string, string>>({})
+
+  // Charger les IDs de rapport pour les sessions terminées
+  useEffect(() => {
+    const finished = sessions.filter((s) => s.status === "FINISHED")
+    finished.forEach((s) => {
+      if (reportIds[s.id] !== undefined) return
+      getReportBySessionId(s.id).then((r) => {
+        if (r) setReportIds((prev) => ({ ...prev, [s.id]: r.id }))
+        else setReportIds((prev) => ({ ...prev, [s.id]: "" }))
+      })
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessions])
 
   const formatDateFr = (value: string) => {
     const date = new Date(value)
@@ -55,6 +70,17 @@ export default function SessionsPage() {
       case "ended": return "Terminée"
       case "error": return "Erreur"
       default: return "N/A"
+    }
+  }
+
+  const handleGenerateReport = async (sessionId: string) => {
+    if (!user?.organizationId) return
+    try {
+      const rId = await generateSessionReport(sessionId, user.organizationId)
+      setReportIds((prev) => ({ ...prev, [sessionId]: rId }))
+      toast.success("Rapport généré")
+    } catch {
+      toast.error("Impossible de générer le rapport")
     }
   }
 
@@ -290,6 +316,30 @@ export default function SessionsPage() {
                           >
                             Terminer
                           </Button>
+                        )}
+                        {session.status === "FINISHED" && (
+                          reportIds[session.id]
+                            ? (
+                              <Link href={`/app/reports/${reportIds[session.id]}`}>
+                                <Button variant="outline" size="sm" className="gap-1.5 text-blue-700 border-blue-300 hover:bg-blue-50">
+                                  <FileText className="h-4 w-4" />
+                                  Rapport
+                                </Button>
+                              </Link>
+                            )
+                            : reportIds[session.id] === ""
+                              ? (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="gap-1.5"
+                                  onClick={() => handleGenerateReport(session.id)}
+                                >
+                                  <FileText className="h-4 w-4" />
+                                  Générer rapport
+                                </Button>
+                              )
+                              : null
                         )}
                         </div>
                       </td>

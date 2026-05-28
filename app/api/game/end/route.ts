@@ -1,6 +1,46 @@
 import { NextRequest, NextResponse } from "next/server"
-import { adminGetGameSession as getGameSession, adminUpdateGameSession as updateGameSession, adminGetScenarioWithProxmox as getScenarioWithProxmox } from "@/lib/firestore/admin-sync"
+import { FieldValue } from "firebase-admin/firestore"
+import { getAdminDb } from "@/lib/firebase-admin"
+import { adminGetGameSession as getGameSession, adminUpdateGameSession as updateGameSession, adminGetScenarioWithProxmox as getScenarioWithProxmox, adminGenerateSessionReport } from "@/lib/firestore/admin-sync"
 import { deleteVM, isProxmoxTimeoutError, stopVM } from "@/lib/proxmox-api"
+
+/**
+ * Efface `gameSessionId` + `vmStatus` sur toute Session parente qui pointe sur ce gameSession,
+ * et passe son status à FINISHED. Rend `/api/game/end` idempotent.
+ */
+async function clearParentSessionLink(gameSessionId: string): Promise<void> {
+  try {
+    const db = getAdminDb()
+    const snap = await db
+      .collection("sessions")
+      .where("gameSessionId", "==", gameSessionId)
+      .get()
+    if (snap.empty) return
+    const batch = db.batch()
+    for (const docSnap of snap.docs) {
+      batch.update(docSnap.ref, {
+        gameSessionId: FieldValue.delete(),
+        vmStatus: FieldValue.delete(),
+        status: "FINISHED",
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+    }
+    await batch.commit()
+
+    // Générer les rapports pour chaque session parente terminée
+    for (const docSnap of snap.docs) {
+      const sessionData = docSnap.data()
+      try {
+        await adminGenerateSessionReport(docSnap.id, sessionData.organizationId ?? "")
+        console.log(`[API /game/end] Rapport généré pour session ${docSnap.id}`)
+      } catch (err) {
+        console.warn(`[API /game/end] Echec génération rapport session ${docSnap.id}:`, err)
+      }
+    }
+  } catch (err) {
+    console.warn("[API /game/end] Echec clearParentSessionLink :", err)
+  }
+}
 
 /**
  * POST /api/game/end
@@ -25,8 +65,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Token invalide" }, { status: 401 })
     }
 
-    // Récupérer l'ID de la session de jeu
-    const { sessionId } = await request.json()
+    // Récupérer l'ID de la session de jeu (query param ou body)
+    let sessionId: string | null = new URL(request.url).searchParams.get("sessionId")
+    if (!sessionId) {
+      const body = await request.json().catch(() => ({} as Record<string, unknown>))
+      sessionId = typeof body.sessionId === "string" ? body.sessionId : null
+    }
     if (!sessionId) {
       return NextResponse.json({ error: "sessionId requis" }, { status: 400 })
     }
@@ -38,8 +82,9 @@ export async function POST(request: NextRequest) {
 
     const { cloneVmid, cloneNode } = gameSession
     if (!cloneVmid || !cloneNode) {
-      // Session n'a jamais eu de VM clonée (erreur au démarrage)
+      // Session n'a jamais eu de VM clonée (erreur au démarrage) ou déjà nettoyée
       await updateGameSession(sessionId, { status: "ended", endedAt: new Date() as any })
+      await clearParentSessionLink(sessionId)
       return NextResponse.json({
         status: "ended",
         message: "Session terminée (pas de VM à nettoyer)",
@@ -52,8 +97,15 @@ export async function POST(request: NextRequest) {
       console.warn(
         `[API /game/end] Impossible de trouver serveur Proxmox pour session ${sessionId}`
       )
-      // Même sans serveur, marquer comme ended
-      await updateGameSession(sessionId, { status: "ended", endedAt: new Date() as any })
+      // Même sans serveur, marquer comme ended et nettoyer les références
+      await getAdminDb().collection("game_sessions").doc(sessionId).update({
+        status: "ended",
+        endedAt: FieldValue.serverTimestamp(),
+        cloneVmid: FieldValue.delete(),
+        cloneNode: FieldValue.delete(),
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+      await clearParentSessionLink(sessionId)
       return NextResponse.json({
         status: "ended",
         message: "Session terminée (serveur Proxmox non trouvé)",
@@ -89,11 +141,16 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Étape 3 : Marquer la session comme ended
-      await updateGameSession(sessionId, {
+      // Étape 3 : Marquer la session comme ended ET nettoyer les références VM
+      // pour rendre /api/game/end idempotent (un 2e appel ne retentera pas le delete).
+      await getAdminDb().collection("game_sessions").doc(sessionId).update({
         status: "ended",
-        endedAt: new Date() as any,
+        endedAt: FieldValue.serverTimestamp(),
+        cloneVmid: FieldValue.delete(),
+        cloneNode: FieldValue.delete(),
+        updatedAt: FieldValue.serverTimestamp(),
       })
+      await clearParentSessionLink(sessionId)
 
       return NextResponse.json({
         status: "ended",
@@ -101,8 +158,15 @@ export async function POST(request: NextRequest) {
       })
     } catch (err: any) {
       console.error(`[API /game/end] Erreur nettoyage VM ${cloneVmid}:`, err)
-      // Même si le nettoyage échoue, marquer comme ended
-      await updateGameSession(sessionId, { status: "ended", endedAt: new Date() as any })
+      // Même si le nettoyage échoue, marquer comme ended et nettoyer les références
+      await getAdminDb().collection("game_sessions").doc(sessionId).update({
+        status: "ended",
+        endedAt: FieldValue.serverTimestamp(),
+        cloneVmid: FieldValue.delete(),
+        cloneNode: FieldValue.delete(),
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+      await clearParentSessionLink(sessionId)
 
       if (isProxmoxTimeoutError(err)) {
         return NextResponse.json(

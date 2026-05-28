@@ -219,7 +219,15 @@ export async function handleVncProxy(clientWs: WebSocket, sessionId: string): Pr
     const scenarioData = await getScenarioWithProxmox(gameSession.scenarioId)
     if (!scenarioData?.server) { clientWs.close(1011, "Configuration Proxmox introuvable"); return }
 
-    const { server } = scenarioData
+    const { server, template } = scenarioData
+
+    // Garde de sécurité : refuser toute tentative de connexion VNC sur le VMID du template.
+    // Le template n'a pas de QEMU running et provoquerait une boucle de reconnexion côté client.
+    if (template?.vmid && cloneVmid === template.vmid) {
+      sessionLog("refus VNC : cloneVmid identique au template", { cloneVmid, templateVmid: template.vmid })
+      clientWs.close(1008, "Connexion VNC interdite sur le template")
+      return
+    }
 
     try {
       const vmStatus = await getVMStatus(server.host, server.token, cloneNode, cloneVmid)
@@ -239,13 +247,12 @@ export async function handleVncProxy(clientWs: WebSocket, sessionId: string): Pr
 
     const proxmoxWsUrl = "wss://" + server.host + "/api2/json/nodes/" + cloneNode + "/qemu/" + cloneVmid + "/vncwebsocket?port=" + port + "&vncticket=" + encodeURIComponent(ticket)
 
-    // CRITICAL: désactiver perMessageDeflate. Le client ws de Node.js
-    // négocie la compression par défaut, contrairement au WebSocket natif
-    // du navigateur (que noVNC utilise). Si Proxmox/pveproxy accepte la
-    // compression, les frames RFB post-handshake sont compressées côté ws
-    // mais Proxmox les relaie telles quelles à QEMU via le UNIX socket,
-    // ce qui corrompt le flux → QEMU RST → code 1006.
-    proxmoxWs = new WebSocket(proxmoxWsUrl, ["binary"], {
+    // PAS de sous-protocole "binary" : le prototype Python (websocket-client) ne
+    // l'utilise pas non plus. Avec "binary", pveproxy change son mode interne et
+    // ferme la connexion avec 1006 après SetEncodings+FBR — reproductible.
+    // Sans sous-protocole, pveproxy utilise le même mode que le Python qui fonctionne.
+    // perMessageDeflate: false reste obligatoire pour éviter la corruption du flux RFB.
+    proxmoxWs = new WebSocket(proxmoxWsUrl, {
       headers: { Authorization: server.token },
       agent: upstreamAgent,
       perMessageDeflate: false,
@@ -275,50 +282,39 @@ export async function handleVncProxy(clientWs: WebSocket, sessionId: string): Pr
     // PHASE 1 : handshake RFB avec Proxmox via WsStream
     const { serverInit, leftover: proxmoxLeftover } = await performRfbHandshakeWithProxmox(proxmoxWs, vncPassword, sessionLog)
 
-    // Envoyer SetPixelFormat + SetEncodings directement à QEMU immédiatement après le handshake.
-    // C'est ici (et non depuis le navigateur) qu'on négocie le format pixel et les encodages,
-    // garantissant que QEMU reçoit ces messages dans le bon état avant le relay.
-    const setupSetPixelFormat = Buffer.from([
-      0, 0, 0, 0,       // type=0 (SetPixelFormat), 3 bytes padding
-      32, 24, 0, 1,     // bpp=32, depth=24, bigEndian=0, trueColour=1
-      0, 255, 0, 255,   // redMax=255 (BE uint16), greenMax=255 (BE uint16)
-      0, 255,           // blueMax=255 (BE uint16)
-      16, 8, 0,         // redShift=16, greenShift=8, blueShift=0
-      0, 0, 0,          // 3 bytes padding
+    // Immédiatement après le handshake Proxmox, envoyer SetEncodings + FBR
+    // depuis le proxy. pveproxy/QEMU a un timeout interne court après ClientInit :
+    // si QEMU ne reçoit pas SetEncodings + FBR dans ~1s, il ferme avec 1006.
+    // Le handshake navigateur peut prendre 200-400ms supplémentaires — trop long.
+    // On initialise la session QEMU ici, puis on relaie les FBU vers le navigateur
+    // une fois le handshake navigateur terminé (buffering pendant ce temps).
+    const fbWidth = serverInit.readUInt16BE(0)
+    const fbHeight = serverInit.readUInt16BE(2)
+    // SetEncodings : Raw(0) + CopyRect(1) + DesktopSize(-223) — identique au VncViewer.tsx
+    const setEncodings = Buffer.from([
+      2, 0, 0, 3,
+      0, 0, 0, 0,
+      0, 0, 0, 1,
+      0xff, 0xff, 0xff, 0x21,
     ])
-    proxmoxWs.send(setupSetPixelFormat, { binary: true })
-
-    const setupSetEncodings = Buffer.from([
-      2, 0, 0, 2,       // type=2 (SetEncodings), padding, count=2
-      0, 0, 0, 0,       // Raw (0)
-      0, 0, 0, 1,       // CopyRect (1)
+    // FramebufferUpdateRequest incrémental=0 (full refresh)
+    const fbr = Buffer.from([
+      3, 0,
+      0, 0, 0, 0,
+      (fbWidth >> 8) & 0xff, fbWidth & 0xff,
+      (fbHeight >> 8) & 0xff, fbHeight & 0xff,
     ])
-    proxmoxWs.send(setupSetEncodings, { binary: true })
-    sessionLog("setup RFB envoye vers QEMU", { spfBytes: setupSetPixelFormat.length, setEncBytes: setupSetEncodings.length })
+    proxmoxWs.send(setEncodings, { binary: true })
+    proxmoxWs.send(fbr, { binary: true })
+    sessionLog("SetEncodings + FBR envoyes au proxy depuis le serveur", { fbWidth, fbHeight })
 
-    // Envoyer un FramebufferUpdateRequest (1×1 px) immédiatement après le setup.
-    // Sans ça, pveproxy/QEMU considère la connexion inactive et ferme avec code 1006
-    // pendant les ~200ms du handshake navigateur qui suit.
-    const keepaliveFbr = Buffer.from([
-      3, 0,   // type=3 (FramebufferUpdateRequest), incremental=0
-      0, 0,   // x=0
-      0, 0,   // y=0
-      0, 1,   // width=1
-      0, 1,   // height=1
-    ])
-    proxmoxWs.send(keepaliveFbr, { binary: true })
-    sessionLog("keepalive FBR envoye vers QEMU (1x1)")
-
-    // Buffer les messages Proxmox pendant le handshake browser
+    // Buffer des FBU Proxmox pendant le handshake navigateur
     const proxmoxPendingBuffer: Buffer[] = []
     const proxmoxBufferHandler = (data: WebSocket.RawData) => {
       const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer)
       proxmoxPendingBuffer.push(chunk)
-      const hex = chunk.subarray(0, 32).toString("hex")
-      console.log("[VNC DIAG] proxmox msg recu (buffer)", { bytes: chunk.length, hex })
     }
     proxmoxWs.on("message", proxmoxBufferHandler)
-    // NE PAS retirer earlyCloseHandler ici — il doit rester actif pendant tout le handshake navigateur
 
     // PHASE 2 : handshake no-auth avec le navigateur via WsStream dedie
     const clientStream = new WsStream(clientWs)
