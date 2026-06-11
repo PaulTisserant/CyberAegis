@@ -1,6 +1,6 @@
 import { FieldValue } from "firebase-admin/firestore"
 import { getAdminDb } from "@/lib/firebase-admin"
-import type { ProxmoxServer, ProxmoxTemplate, Scenario, GameSession, Player, PlayerReportData } from "@/lib/types"
+import type { ProxmoxServer, ProxmoxTemplate, Scenario, GameSession, Player, PlayerReportData, ReportFlagMeta } from "@/lib/types"
 import { BASE_POINTS, FLAG_WEIGHTS } from "@/lib/flags-scoring"
 
 // ─── Helper ───────────────────────────────────────────────────────────────
@@ -250,6 +250,16 @@ export async function adminGenerateSessionReport(
       (acc, f) => acc + (FLAG_WEIGHTS[f.difficulty] ?? 1) * BASE_POINTS,
       0
     ) ?? 0
+  const flagsMeta: ReportFlagMeta[] = (scenario?.flags ?? [])
+    .slice()
+    .sort((a, b) => a.order - b.order)
+    .map((f) => ({
+      id: f.id,
+      label: f.label,
+      difficulty: f.difficulty,
+      points: f.points,
+      order: f.order,
+    }))
 
   // Charger les joueurs dans sessions/{parentSessionId}/players
   const playersSnap = await db
@@ -324,6 +334,7 @@ export async function adminGenerateSessionReport(
       averageDuration,
       totalFlags,
       maxScore,
+      flags: flagsMeta,
       players: playerDatas,
     },
   })

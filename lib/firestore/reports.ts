@@ -10,7 +10,7 @@ import {
   orderBy,
   Timestamp,
 } from "firebase/firestore"
-import type { Report, Player, PlayerReportData } from "@/lib/types"
+import type { Report, Player, PlayerReportData, ReportFlagMeta } from "@/lib/types"
 import { getScenario } from "@/lib/firestore/scenarios"
 import { BASE_POINTS, FLAG_WEIGHTS } from "@/lib/flags-scoring"
 
@@ -82,6 +82,16 @@ export async function generateSessionReport(
     (acc, f) => acc + (FLAG_WEIGHTS[f.difficulty] ?? 1) * BASE_POINTS,
     0
   ) ?? 0
+  const flagsMeta: ReportFlagMeta[] = (scenario?.flags ?? [])
+    .slice()
+    .sort((a, b) => a.order - b.order)
+    .map((f) => ({
+      id: f.id,
+      label: f.label,
+      difficulty: f.difficulty,
+      points: f.points,
+      order: f.order,
+    }))
 
   // Timestamp de fin de session (maintenant) pour les joueurs sans completedAt
   const sessionEndMs = Date.now()
@@ -132,6 +142,7 @@ export async function generateSessionReport(
       averageDuration,
       totalFlags,
       maxScore,
+      flags: flagsMeta,
       players: playerDatas,
     },
   })

@@ -141,6 +141,14 @@ export interface PlayerReportData {
   submittedFlags: SubmittedFlag[]
 }
 
+export interface ReportFlagMeta {
+  id: string
+  label: string
+  difficulty: FlagDifficulty
+  points: number
+  order: number
+}
+
 export interface Report {
   id: string
   sessionId: string
@@ -158,6 +166,7 @@ export interface ReportData {
   averageDuration: number  // minutes (moyenne de durationSeconds / 60)
   totalFlags: number       // nb total de flags du scénario
   maxScore: number         // score maximum atteignable
+  flags: ReportFlagMeta[]  // métadonnées des flags (label, difficulté…)
   players: PlayerReportData[]
 }
 
