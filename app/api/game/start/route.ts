@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { adminGetScenarioWithProxmox, adminCreateGameSession, adminUpdateGameSession } from "@/lib/firestore/admin-sync"
-import { cloneTemplate, isProxmoxTimeoutError, startVM } from "@/lib/proxmox-api"
+import { cloneTemplate, getNextFreeVmid, isProxmoxTimeoutError, startVM } from "@/lib/proxmox-api"
 
 /**
  * POST /api/game/start
@@ -53,8 +53,25 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Générer un VMID unique (pour l'instant : simple random, à améliorer)
-    const cloneVmid = 1000 + Math.floor(Math.random() * 9000)
+    // Générer un VMID unique via l'API Proxmox /cluster/nextid (atomique, garanti libre).
+    // Évite toute collision avec un template ou une VM existante.
+    let cloneVmid: number
+    try {
+      cloneVmid = await getNextFreeVmid(server.host, server.token)
+    } catch (nextidErr) {
+      console.error("[API /game/start] Echec /cluster/nextid :", nextidErr)
+      return NextResponse.json(
+        { error: "Impossible d'obtenir un VMID libre auprès de Proxmox" },
+        { status: 503 }
+      )
+    }
+
+    if (cloneVmid === template.vmid) {
+      return NextResponse.json(
+        { error: "VMID alloué identique au template — refus de cloner" },
+        { status: 500 }
+      )
+    }
 
     // Récupérer l'organizationId depuis la DB du scénario
     const actualOrgId = scenario.organizationId

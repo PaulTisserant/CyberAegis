@@ -18,7 +18,6 @@ import { listVMs } from "@/lib/proxmox-api"
 function getProxmoxSyncEnvConfig() {
   const host = process.env.PROXMOX_HOST
   const token = process.env.PROXMOX_TOKEN
-  console.log(token)
   const node = process.env.PROXMOX_NODE
   const templatePrefix = process.env.PROXMOX_TEMPLATE_PREFIX
 
@@ -108,11 +107,48 @@ export async function synchronizeProxmoxScenarios(organizationId: string): Promi
       return
     }
 
-    // Étape 3 : Upsert des templates Proxmox en DB
+    // Étape 3 : Charger les données existantes une seule fois (hors boucle)
     const existingTemplates = await getProxmoxTemplates(organizationId)
+    // adminGetScenarios retourne TOUS les scénarios (actifs + inactifs)
+    const existingScenarios = await getScenarios(organizationId)
+
+    // Index des vmids présents sur Proxmox pour ce préfixe
+    const activeVmids = new Set(templateVMs.map((vm) => vm.vmid))
+
+    // ── Étape 3a : Dédoublonner les templates Firestore par vmid ──────────
+    // Si plusieurs templates ont le même vmid, garder le plus récent et supprimer les autres
+    const vmidToCanonicalTemplateId = new Map<number, string>()
+    const orphanTemplateIds = new Set<string>()
+
+    for (const template of existingTemplates) {
+      if (!vmidToCanonicalTemplateId.has(template.vmid)) {
+        vmidToCanonicalTemplateId.set(template.vmid, template.id)
+      } else {
+        // Doublon : marquer comme orphelin (sera supprimé après réassignation des scénarios)
+        orphanTemplateIds.add(template.id)
+      }
+    }
+
+    // Réassigner les scénarios liés à un template doublon vers le canonical
+    for (const scenario of existingScenarios) {
+      if (orphanTemplateIds.has(scenario.proxmoxTemplateId)) {
+        const orphanTemplate = existingTemplates.find((t) => t.id === scenario.proxmoxTemplateId)
+        if (orphanTemplate) {
+          const canonicalId = vmidToCanonicalTemplateId.get(orphanTemplate.vmid)
+          if (canonicalId) {
+            await updateScenario(scenario.id, { proxmoxTemplateId: canonicalId })
+            console.log(`[Init] Scénario "${scenario.name}" réassigné vers template canonical ${canonicalId}`)
+          }
+        }
+      }
+    }
 
     for (const templateVm of templateVMs) {
-      const foundTemplate = existingTemplates.find((t) => t.vmid === templateVm.vmid)
+      // ── Template : upsert par vmid (utilise le canonical s'il existe) ───
+      const canonicalId = vmidToCanonicalTemplateId.get(templateVm.vmid)
+      const foundTemplate = canonicalId
+        ? existingTemplates.find((t) => t.id === canonicalId)
+        : undefined
 
       let proxmoxTemplateId: string
       if (foundTemplate) {
@@ -133,11 +169,12 @@ export async function synchronizeProxmoxScenarios(organizationId: string): Promi
         })
       }
 
-      // Étape 4 : Upsert scénario associé au template
-      const existingScenarios = await getScenarios(organizationId)
+      // ── Scénario : match UNIQUEMENT par proxmoxTemplateId ───────────────
+      // Recharger les scénarios pour tenir compte des réassignations
+      const currentScenarios = await getScenarios(organizationId)
       const scenarioDefinition = buildScenarioFromTemplateName(templateVm.name)
-      const existingScenario = existingScenarios.find(
-        (s) => s.proxmoxTemplateId === proxmoxTemplateId || s.name === scenarioDefinition.name
+      const existingScenario = currentScenarios.find(
+        (s) => s.proxmoxTemplateId === proxmoxTemplateId
       )
 
       if (!existingScenario) {
@@ -152,7 +189,7 @@ export async function synchronizeProxmoxScenarios(organizationId: string): Promi
           isActive: true,
         })
         console.log(`[Init] Scénario créé depuis template ${templateVm.name}`)
-      } else {
+      } else if (existingScenario.isActive) {
         await updateScenario(existingScenario.id, {
           name: scenarioDefinition.name,
           description: scenarioDefinition.description,
@@ -160,9 +197,25 @@ export async function synchronizeProxmoxScenarios(organizationId: string): Promi
           tags: scenarioDefinition.tags,
           duration: scenarioDefinition.duration,
           proxmoxTemplateId,
-          isActive: true,
         })
-        console.log(`[Init] Scénario déjà présent pour ${templateVm.name}`)
+        console.log(`[Init] Scénario mis à jour pour ${templateVm.name}`)
+      } else {
+        console.log(`[Init] Scénario ignoré (désactivé manuellement) : ${templateVm.name}`)
+      }
+    }
+
+    // ── Étape 4 : Désactiver les scénarios dont le vmid a disparu de Proxmox ──
+    // Recharger les scénarios actifs après toutes les écritures
+    const finalScenarios = await getScenarios(organizationId)
+    for (const scenario of finalScenarios) {
+      if (!scenario.isActive) continue
+      const template = existingTemplates.find((t) => t.id === scenario.proxmoxTemplateId)
+      if (!template) continue
+      if (!activeVmids.has(template.vmid)) {
+        await updateScenario(scenario.id, { isActive: false })
+        console.log(
+          `[Init] Scénario "${scenario.name}" désactivé — VM vmid=${template.vmid} absente de Proxmox`
+        )
       }
     }
 

@@ -12,7 +12,8 @@ import {
   type Unsubscribe,
   onSnapshot,
 } from "firebase/firestore"
-import type { Scenario } from "@/lib/types"
+import type { Scenario, ScenarioFlag, PublicScenarioFlag } from "@/lib/types"
+import { computeFlagScore } from "@/lib/flags-scoring"
 import { getProxmoxTemplate } from "./proxmox-templates"
 import { getProxmoxServer } from "./proxmox-servers"
 
@@ -97,5 +98,54 @@ export async function getScenarioWithProxmox(id: string) {
   const server = await getProxmoxServer(template.proxmoxServerId)
   
   return { scenario, template, server }
+}
+
+// ─── Flags du scénario ─────────────────────────────────────────────────────
+
+/**
+ * Normalise la liste de flags : recalcule weight/points depuis difficulty,
+ * trie par `order`, et assigne un `order` séquentiel.
+ */
+export function normalizeScenarioFlags(
+  flags: Array<Omit<ScenarioFlag, "weight" | "points" | "order"> & Partial<Pick<ScenarioFlag, "order">>>
+): ScenarioFlag[] {
+  return flags
+    .slice()
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+    .map((f, idx) => {
+      const { weight, points } = computeFlagScore(f.difficulty)
+      return {
+        id: f.id,
+        label: f.label,
+        value: f.value,
+        difficulty: f.difficulty,
+        weight,
+        points,
+        hint: f.hint,
+        order: idx,
+      }
+    })
+}
+
+/** Remplace l'intégralité des flags d'un scénario (admin). */
+export async function setScenarioFlags(
+  scenarioId: string,
+  flags: Array<Omit<ScenarioFlag, "weight" | "points" | "order"> & Partial<Pick<ScenarioFlag, "order">>>
+): Promise<void> {
+  const normalized = normalizeScenarioFlags(flags)
+  await updateDoc(doc(db, COL, scenarioId), {
+    flags: normalized,
+    updatedAt: Timestamp.now(),
+  })
+}
+
+/** Vue publique des flags : sans le champ `value`, pour le client joueur. */
+export async function getScenarioFlagsPublic(scenarioId: string): Promise<PublicScenarioFlag[]> {
+  const sc = await getScenario(scenarioId)
+  if (!sc?.flags) return []
+  return sc.flags
+    .slice()
+    .sort((a, b) => a.order - b.order)
+    .map(({ value: _value, ...rest }) => rest)
 }
 

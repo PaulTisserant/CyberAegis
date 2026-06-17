@@ -36,8 +36,13 @@ export function useInitializeData() {
           const data = await response.json().catch(() => ({ error: "Erreur inconnue" }))
           if (data?.errorType === "PROXMOX_CONNECTION") {
             toast.error("Connexion Proxmox indisponible. Vérifiez le serveur ou le réseau.")
+          } else {
+            toast.error(data.error ?? "Erreur de synchronisation Proxmox")
           }
-          throw new Error(data.error ?? "Erreur de synchronisation Proxmox")
+          // Marquer comme initialisé pour éviter les tentatives infinies,
+          // l'app reste fonctionnelle sans les données Proxmox.
+          setInitialized(true)
+          return
         }
 
         setInitialized(true)

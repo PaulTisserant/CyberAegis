@@ -268,3 +268,16 @@ export async function deleteVM(
 export function generateCloneVmid(): number {
   return 1000 + Math.floor(Math.random() * 9000)
 }
+
+/**
+ * Demande à Proxmox le prochain VMID libre (atomique côté cluster).
+ * Évite toute collision avec un template ou un clone existant.
+ */
+export async function getNextFreeVmid(host: string, token: string): Promise<number> {
+  const { data } = await proxmoxFetch(host, token, "/cluster/nextid")
+  const vmid = Number(data)
+  if (!Number.isFinite(vmid) || vmid <= 0) {
+    throw new Error(`Réponse /cluster/nextid invalide: ${String(data)}`)
+  }
+  return vmid
+}

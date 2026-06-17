@@ -101,11 +101,16 @@ export async function attachGameSessionToSession(
   id: string,
   gameSessionId: string
 ): Promise<void> {
+  // Lier le Session au GameSession
   await updateDoc(doc(db, COL, id), {
     gameSessionId,
     vmStatus: "starting",
     status: "RUNNING",
     updatedAt: Timestamp.now(),
+  })
+  // Stocker le lien inverse dans GameSession pour que la page joueur retrouve la bonne session
+  await updateDoc(doc(db, "game_sessions", gameSessionId), {
+    parentSessionId: id,
   })
 }
 
